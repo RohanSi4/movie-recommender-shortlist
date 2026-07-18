@@ -1,0 +1,19 @@
+{
+  "measured_at": "2026-07-18",
+  "machine": "Apple M4 Pro",
+  "requests_per_mode": 200,
+  "warmups_per_mode": 20,
+  "k": 25,
+  "known_user": {
+    "client_round_trip_ms": { "p50": 4.276, "p95": 5.837, "p99": 6.374, "mean": 4.464 },
+    "server_reported_ms": { "p50": 3.0, "p95": 5.0, "p99": 5.01, "mean": 3.465 }
+  },
+  "cold_user": {
+    "client_round_trip_ms": { "p50": 12.605, "p95": 14.761, "p99": 15.398, "mean": 12.811 },
+    "server_reported_ms": { "p50": 11.0, "p95": 14.0, "p99": 14.01, "mean": 11.63 }
+  },
+  "movie_similarity": {
+    "client_round_trip_ms": { "p50": 3.495, "p95": 3.693, "p99": 3.852, "mean": 3.522 },
+    "server_reported_ms": { "p50": 3.0, "p95": 3.0, "p99": 3.0, "mean": 2.93 }
+  }
+}

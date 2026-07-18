@@ -8,6 +8,10 @@ service/data/*
 !service/data/
 !service/data/movie_features.csv
 !service/data/user_features.csv
+!service/data/item_embeddings.bin
+!service/data/user_embeddings.bin
+!service/data/user_history.bin
+!service/data/retrieval_manifest.json
 
 # Python
 __pycache__/

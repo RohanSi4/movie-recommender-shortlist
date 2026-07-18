@@ -54,6 +54,29 @@ every method's candidates (standard protocol), reports recall@100 and
 recall@500 over held-out positives, and includes catalog coverage because a
 retriever that only ever surfaces popular titles scores deceptively well.
 
+## Go serving path
+
+`export_embeddings.py` publishes float16 user and item vectors plus a compact
+history index containing every training-window rating for each warm user. The
+manifest hashes all three files and identifies one model run. The Go service
+verifies the full bundle at startup, widens vectors to float32, and performs an
+exact dot-product scan over all 87,585 items. It uses a bounded top-k heap, so it
+does not allocate and sort the full catalog on every request.
+
+Known-user requests exclude the user's stored history before returning the
+shortlist. Unknown users take the existing popularity fallback. Movie-based
+queries use item-to-item cosine similarity and always exclude the seed title.
+If `MODEL_API_BASE` is configured, LightGBM reranks the retrieved candidates;
+if that service fails, the API returns the learned retrieval order.
+
+Measured locally on an Apple M4 Pro over 200 requests after 20 warmups:
+
+| path | client p50 | client p95 | server p50 |
+|---|---:|---:|---:|
+| known user | 4.3 ms | 5.8 ms | 3 ms |
+| movie similarity | 3.5 ms | 3.7 ms | 3 ms |
+| cold-user fallback | 12.6 ms | 14.8 ms | 11 ms |
+
 ## Honest limitations
 
 - In-batch negatives sample negatives proportional to item popularity, which

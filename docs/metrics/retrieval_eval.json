@@ -1,0 +1,14 @@
+{
+  "protocol": "global_time_split_90_10",
+  "users_evaluated": 2000,
+  "catalog_size": 87585,
+  "recall@100_two_tower": 0.2290657313248669,
+  "recall@500_two_tower": 0.4815976133318602,
+  "coverage@100_two_tower": 0.06196266483986984,
+  "recall@100_popularity": 0.12687307807720402,
+  "recall@500_popularity": 0.2999663814013353,
+  "coverage@100_popularity": 0.010652508991265628,
+  "recall@100_random": 0.0010200177727629942,
+  "recall@500_random": 0.007111989229033461,
+  "coverage@100_random": 0.8994576696922989
+}

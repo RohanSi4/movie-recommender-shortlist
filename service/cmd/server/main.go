@@ -10,10 +10,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"movierec/internal/retrieval"
 )
 
 type Movie struct {
@@ -40,8 +43,8 @@ type App struct {
 	Movies         []Movie
 	MoviesByID     map[int]Movie
 	UsersByID      map[int]UserFeatures
-	CandidateIDs   []int
-	CandidateSize  int
+	RetrievalSize  int
+	Retrieval      *retrieval.Bundle
 	DataDir        string
 	PosterBase     string
 	ModelAPIBase   string
@@ -74,6 +77,7 @@ type RankResult struct {
 type RankResponse struct {
 	UserID    int          `json:"user_id"`
 	MovieID   int          `json:"movie_id,omitempty"`
+	Strategy  string       `json:"strategy"`
 	Results   []RankResult `json:"results"`
 	LatencyMS int64        `json:"latency_ms"`
 }
@@ -106,12 +110,12 @@ func main() {
 		}, "service/data")
 	}
 	modelAPI := getEnv("MODEL_API_BASE", "")
-	candidateSize := getEnvInt("CANDIDATE_POOL_SIZE", 2000)
+	retrievalSize := getEnvInt("CANDIDATE_POOL_SIZE", 2000)
 	app := &App{
 		DataDir:        dataDir,
 		PosterBase:     "https://image.tmdb.org/t/p/w342",
 		ModelAPIBase:   modelAPI,
-		CandidateSize:  candidateSize,
+		RetrievalSize:  retrievalSize,
 		AllowedOrigins: parseAllowedOrigins(getEnv("CORS_ALLOWED_ORIGINS", "")),
 		ScoreWeights: ScoreWeights{
 			VoteAvg:  0.15,
@@ -127,10 +131,19 @@ func main() {
 		log.Printf("Model API: %s", app.ModelAPIBase)
 	}
 	log.Printf("CORS allowed origins: %s", strings.Join(originList(app.AllowedOrigins), ", "))
-	log.Printf("Candidate pool size: %d", app.CandidateSize)
+	log.Printf("Retrieval candidate size: %d", app.RetrievalSize)
+	memoryLimitMB := getEnvInt("MEMORY_LIMIT_MB", 384)
+	if memoryLimitMB > 0 {
+		debug.SetMemoryLimit(int64(memoryLimitMB) * 1024 * 1024)
+		log.Printf("Go memory limit: %d MB", memoryLimitMB)
+	}
 	if err := app.LoadData(); err != nil {
 		log.Printf("Data load warning: %v", err)
 	}
+	// CSV parsing and binary widening create large short-lived buffers. Return
+	// those pages before accepting traffic so small service instances keep a
+	// safe steady-state memory margin.
+	debug.FreeOSMemory()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", app.handleHealth)
@@ -177,9 +190,21 @@ func (a *App) LoadData() error {
 		a.UsersByID[u.UserID] = u
 	}
 
-	a.CandidateIDs = buildCandidatePool(movies, a.CandidateSize)
-
 	log.Printf("Loaded %d movies, %d users", len(movies), len(users))
+	bundle, err := retrieval.LoadBundle(a.DataDir)
+	if err != nil {
+		log.Printf("Retrieval unavailable; using heuristic fallbacks: %v", err)
+	} else {
+		a.Retrieval = bundle
+		log.Printf(
+			"Loaded retrieval run %s: %d items, %d users, %d histories, %d dimensions",
+			bundle.ModelRun,
+			bundle.Items.Len(),
+			bundle.Users.Len(),
+			bundle.History.Len(),
+			bundle.Items.Dim(),
+		)
+	}
 	return nil
 }
 
@@ -189,7 +214,17 @@ func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+	retrievalReady := a.Retrieval != nil
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":          "ok",
+		"retrieval_ready": retrievalReady,
+		"model_run": func() string {
+			if retrievalReady {
+				return a.Retrieval.ModelRun
+			}
+			return ""
+		}(),
+	})
 }
 
 func (a *App) handleRank(w http.ResponseWriter, r *http.Request) {
@@ -213,9 +248,7 @@ func (a *App) handleRank(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
-	if req.K <= 0 {
-		req.K = 25
-	}
+	req.K = boundedK(req.K)
 	if req.UserID == nil && req.MovieID == nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id or movie_id required"})
 		return
@@ -230,30 +263,10 @@ func (a *App) handleRank(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "movie not found"})
 			return
 		}
-		results = a.rankMoviesByMovie(seed, req.K)
+		results, response.Strategy = a.rankMoviesByMovie(seed, req.K)
 		response.MovieID = *req.MovieID
 	} else if req.UserID != nil && *req.UserID > 0 {
-		if a.ModelAPIBase != "" {
-			ranked, err := a.rankMoviesWithModel(*req.UserID, req.K)
-			if err == nil {
-				results = ranked
-			} else {
-				log.Printf("Model API error, falling back to heuristic: %v", err)
-				user, ok := a.UsersByID[*req.UserID]
-				var userPtr *UserFeatures
-				if ok {
-					userPtr = &user
-				}
-				results = a.rankMovies(userPtr, req.K)
-			}
-		} else {
-			user, ok := a.UsersByID[*req.UserID]
-			var userPtr *UserFeatures
-			if ok {
-				userPtr = &user
-			}
-			results = a.rankMovies(userPtr, req.K)
-		}
+		results, response.Strategy = a.rankMoviesForUser(*req.UserID, req.K)
 		response.UserID = *req.UserID
 	} else {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid user_id or movie_id"})
@@ -262,6 +275,16 @@ func (a *App) handleRank(w http.ResponseWriter, r *http.Request) {
 	response.LatencyMS = time.Since(start).Milliseconds()
 	response.Results = results
 	writeJSON(w, http.StatusOK, response)
+}
+
+func boundedK(k int) int {
+	if k <= 0 {
+		return 25
+	}
+	if k > 100 {
+		return 100
+	}
+	return k
 }
 
 func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
@@ -347,7 +370,91 @@ func (a *App) rankMovies(user *UserFeatures, k int) []RankResult {
 	return results
 }
 
-func (a *App) rankMoviesByMovie(seed Movie, k int) []RankResult {
+func (a *App) rankMoviesForUser(userID int, k int) ([]RankResult, string) {
+	user, knownUser := a.UsersByID[userID]
+	var userPtr *UserFeatures
+	if knownUser {
+		userPtr = &user
+	}
+
+	if a.Retrieval != nil {
+		query := a.Retrieval.Users.Vector(userID)
+		if query != nil {
+			retrieveK := k + 64
+			if a.ModelAPIBase != "" && a.RetrievalSize > retrieveK {
+				retrieveK = a.RetrievalSize
+			}
+			exclude := a.Retrieval.History.ExcludeSet(userID)
+			scores := a.Retrieval.Items.TopK(query, retrieveK, exclude)
+			if len(scores) > 0 {
+				if a.ModelAPIBase != "" {
+					candidates := make([]int, 0, len(scores))
+					for _, score := range scores {
+						candidates = append(candidates, score.ID)
+					}
+					ranked, err := a.rankMoviesWithModel(userID, k, candidates)
+					if err == nil && len(ranked) > 0 {
+						return ranked, "two_tower_then_lightgbm"
+					}
+					if err != nil {
+						log.Printf("Model API error; returning retrieval ranking: %v", err)
+					} else {
+						log.Printf("Model API returned no usable results; returning retrieval ranking")
+					}
+				}
+				return a.embeddingResults(scores, k, func(movie Movie) []string {
+					return buildUserEmbeddingReasons(movie)
+				}), "two_tower"
+			}
+		}
+	}
+
+	return a.rankMovies(userPtr, k), "popularity_fallback"
+}
+
+func (a *App) rankMoviesByMovie(seed Movie, k int) ([]RankResult, string) {
+	if a.Retrieval != nil {
+		query := a.Retrieval.Items.Vector(seed.MovieID)
+		if query != nil {
+			exclude := map[int]bool{seed.MovieID: true}
+			scores := a.Retrieval.Items.TopK(query, k+64, exclude)
+			results := a.embeddingResults(scores, k, func(movie Movie) []string {
+				return buildMovieEmbeddingReasons(seed, movie)
+			})
+			if len(results) > 0 {
+				return results, "two_tower_movie_similarity"
+			}
+		}
+	}
+	return a.rankMoviesByMovieHeuristic(seed, k), "movie_heuristic_fallback"
+}
+
+func (a *App) embeddingResults(
+	scores []retrieval.Scored,
+	k int,
+	reasonBuilder func(Movie) []string,
+) []RankResult {
+	results := make([]RankResult, 0, k)
+	for _, scored := range scores {
+		movie, ok := a.MoviesByID[scored.ID]
+		if !ok {
+			continue
+		}
+		results = append(results, RankResult{
+			MovieID:   movie.MovieID,
+			Score:     scored.Score,
+			Title:     movie.Title,
+			PosterURL: joinPosterURL(a.PosterBase, movie.TMDBPosterPath),
+			Reasons:   reasonBuilder(movie),
+		})
+		if len(results) == k {
+			break
+		}
+	}
+	return results
+}
+
+func (a *App) rankMoviesByMovieHeuristic(seed Movie, k int) []RankResult {
 	results := make([]RankResult, 0, k)
 
 	type scored struct {
@@ -383,11 +490,10 @@ func (a *App) rankMoviesByMovie(seed Movie, k int) []RankResult {
 	return results
 }
 
-func (a *App) rankMoviesWithModel(userID int, k int) ([]RankResult, error) {
-	if len(a.CandidateIDs) == 0 {
+func (a *App) rankMoviesWithModel(userID int, k int, candidates []int) ([]RankResult, error) {
+	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no candidates available")
 	}
-	candidates := a.CandidateIDs
 	if k > len(candidates) {
 		k = len(candidates)
 	}
@@ -474,6 +580,28 @@ func buildReasons(m Movie, user *UserFeatures) []string {
 	return reasons
 }
 
+func buildUserEmbeddingReasons(movie Movie) []string {
+	reasons := []string{"learned_from_user_history"}
+	if movie.TMDBVoteAvg >= 7.5 {
+		reasons = append(reasons, "high_vote_avg")
+	}
+	if movie.RatingCount >= 1000 {
+		reasons = append(reasons, "popular_in_movielens")
+	}
+	return reasons
+}
+
+func buildMovieEmbeddingReasons(seed Movie, candidate Movie) []string {
+	reasons := []string{"learned_movie_similarity"}
+	if genreSimilarity(seed, candidate) >= 0.4 {
+		reasons = append(reasons, "similar_genres")
+	}
+	if candidate.RatingCount >= 1000 {
+		reasons = append(reasons, "popular_in_movielens")
+	}
+	return reasons
+}
+
 func buildMovieReasons(seed Movie, candidate Movie) []string {
 	reasons := []string{}
 	if genreSimilarity(seed, candidate) >= 0.4 {
@@ -486,39 +614,6 @@ func buildMovieReasons(seed Movie, candidate Movie) []string {
 		reasons = append(reasons, "popular_in_movielens")
 	}
 	return reasons
-}
-
-func buildCandidatePool(movies []Movie, size int) []int {
-	if size <= 0 {
-		size = 2000
-	}
-	type scored struct {
-		MovieID int
-		Count   int
-		Mean    float64
-	}
-	scoredMovies := make([]scored, 0, len(movies))
-	for _, m := range movies {
-		scoredMovies = append(scoredMovies, scored{
-			MovieID: m.MovieID,
-			Count:   m.RatingCount,
-			Mean:    m.RatingMean,
-		})
-	}
-	sort.Slice(scoredMovies, func(i, j int) bool {
-		if scoredMovies[i].Count == scoredMovies[j].Count {
-			return scoredMovies[i].Mean > scoredMovies[j].Mean
-		}
-		return scoredMovies[i].Count > scoredMovies[j].Count
-	})
-	if size > len(scoredMovies) {
-		size = len(scoredMovies)
-	}
-	out := make([]int, 0, size)
-	for i := 0; i < size; i++ {
-		out = append(out, scoredMovies[i].MovieID)
-	}
-	return out
 }
 
 func scoreMovieSimilarity(seed Movie, candidate Movie) float64 {

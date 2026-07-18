@@ -14,14 +14,20 @@ app people can actually use.
 ## What it does
 
 - Recommends movies for a MovieLens user from their historical ratings
-- Searches by title and finds similar movies from a chosen starting point
+- Filters out movies that user already rated
+- Searches by title and finds learned similar movies from a chosen starting point
 - Adds TMDB genres, release details, popularity, and posters
 - Returns scores and short reasons instead of a bare list of titles
 - Serves the current live ranking path through a low-latency Go API
 
-I built the data pipeline, model, API, and web app. The offline LightGBM ranker
-beat the current heuristic baseline by 11.8%. The current Go recommendation path
-responds in about 17 milliseconds in the project benchmark.
+I built the data pipeline, models, API, and web app. The two-tower retriever
+reached 0.229 recall@100 against 0.127 for popularity on the same held-out
+sample. In a 200-request local benchmark, known-user requests had a 4.3 ms
+median and 5.8 ms p95 client round trip. Movie-similarity requests had a 3.5 ms
+median. The offline LightGBM ranker also beat the heuristic baseline by 11.8%.
+The committed [retrieval evaluation](docs/metrics/retrieval_eval.json) and
+[latency results](docs/metrics/retrieval_latency.json) keep those claims
+checkable.
 
 ## How it fits together
 
@@ -30,25 +36,27 @@ MovieLens ratings + TMDB metadata
                 |
                 v
 Python ML pipeline
-  feature engineering, LightGBM training, offline evaluation
+  feature engineering, two-tower retrieval, LightGBM ranking
                 |
                 v
-Exported user and movie features
+Verified serving bundle
+  float16 user/movie vectors, seen-movie history, checksums
                 |
                 v
 Go ranking API
-  candidate generation, ranking, search, explanations
+  exact dot-product retrieval, optional ranking, search, explanations
                 |
                 v
 Next.js app
   title search, user recommendations, result cards
 ~~~
 
-The public demo uses a lightweight heuristic over the exported feature tables.
-The trained LightGBM model and a FastAPI inference service are included, but the
-live Go service does not pretend to serve that model unless `MODEL_API_BASE` is
-configured. Keeping that boundary clear matters more than making the demo sound
-more advanced than it is.
+The public demo serves the learned two-tower retrieval model directly in Go.
+Known users get personalized candidates from the full 87,585-movie catalog,
+with their training-window history removed. Movie search uses the same learned
+item space for similarity. Users outside the trained vocabulary fall back to
+the feature-table popularity heuristic. LightGBM reranking remains optional
+and is only used when `MODEL_API_BASE` is configured.
 
 ## Run it locally
 
@@ -62,7 +70,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ~~~
 
-The repository already includes exported feature tables for the Go service.
+The repository includes exported feature tables and the verified retrieval
+bundle for the Go service.
 Start the API:
 
 ~~~bash
@@ -93,6 +102,9 @@ make features
 make training
 make train
 make export
+make train-retrieval
+make metrics-retrieval
+make export-retrieval
 ~~~
 
 TMDB enrichment needs `TMDB_API_KEY`. MovieLens supplies the ratings, tags, and
@@ -113,6 +125,7 @@ make metrics-eval
 make metrics-compare
 make metrics-scale
 make metrics-latency
+make test-service
 cd frontend && npm run lint && npm run build
 ~~~
 
