@@ -1,0 +1,29 @@
+{
+  "format_version": 1,
+  "model_run": "2d24299b846f9a7b",
+  "val_fraction": 0.1,
+  "seen_policy": "all_ratings_in_training_window",
+  "files": {
+    "items": {
+      "name": "item_embeddings.bin",
+      "sha256": "896e57a4add42cc9778628d9d8d9986a3c8b4cf264417b58b6ef680952164f39",
+      "count": 87585,
+      "dim": 64,
+      "dtype": "float16"
+    },
+    "users": {
+      "name": "user_embeddings.bin",
+      "sha256": "f2fbc6041087954728c3a8ef1c3488cec8344a232776d7560c2f9d3b21158ff9",
+      "count": 186458,
+      "dim": 64,
+      "dtype": "float16"
+    },
+    "history": {
+      "name": "user_history.bin",
+      "sha256": "510f5df666efb0e801e9b5c1028ab0a22d9af7bdac339f16f14a378a2af204f1",
+      "count": 186458,
+      "pairs": 28790289,
+      "encoding": "delta-uvarint"
+    }
+  }
+}
