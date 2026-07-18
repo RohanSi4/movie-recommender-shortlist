@@ -1,7 +1,8 @@
-# Movie Recommender
+# Shortlist
 
-An end-to-end recommendation system that takes movie ranking work out of a
-notebook and puts it behind an app people can actually use.
+An end-to-end movie recommendation system: retrieval builds the shortlist,
+ranking orders it. Takes ranking work out of a notebook and puts it behind an
+app people can actually use.
 
 [Try the live app](https://movie-reccomender-system-red.vercel.app) ·
 [Read the case study](https://rohansingh04.com/projects/movie-recommender)
