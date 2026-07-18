@@ -20,17 +20,17 @@ import (
 )
 
 type Movie struct {
-	MovieID        int
-	Title          string
-	Genres         string
-	RatingMean     float64
-	RatingCount    int
-	TMDBVoteAvg    float64
-	TMDBPopularity float64
-	TMDBGenres     string
-	TMDBPosterPath string
-	TMDBOverview   string
-	TMDBRelease    string
+	MovieID        int     `json:"movie_id"`
+	Title          string  `json:"title"`
+	Genres         string  `json:"genres"`
+	RatingMean     float64 `json:"rating_mean"`
+	RatingCount    int     `json:"rating_count"`
+	TMDBVoteAvg    float64 `json:"tmdb_vote_average"`
+	TMDBPopularity float64 `json:"tmdb_popularity"`
+	TMDBGenres     string  `json:"tmdb_genres"`
+	TMDBPosterPath string  `json:"tmdb_poster_path"`
+	TMDBOverview   string  `json:"tmdb_overview"`
+	TMDBRelease    string  `json:"tmdb_release_date"`
 }
 
 type UserFeatures struct {
@@ -62,22 +62,29 @@ type ScoreWeights struct {
 }
 
 type RankRequest struct {
-	UserID  *int `json:"user_id,omitempty"`
-	MovieID *int `json:"movie_id,omitempty"`
-	K       int  `json:"k"`
+	UserID          *int  `json:"user_id,omitempty"`
+	MovieID         *int  `json:"movie_id,omitempty"`
+	MovieIDs        []int `json:"movie_ids,omitempty"`
+	ExcludeMovieIDs []int `json:"exclude_movie_ids,omitempty"`
+	K               int   `json:"k"`
 }
 
 type RankResult struct {
-	MovieID   int      `json:"movie_id"`
-	Score     float64  `json:"score"`
-	Title     string   `json:"title"`
-	PosterURL string   `json:"poster_url"`
-	Reasons   []string `json:"reasons,omitempty"`
+	MovieID     int      `json:"movie_id"`
+	Score       float64  `json:"score"`
+	Title       string   `json:"title"`
+	PosterURL   string   `json:"poster_url"`
+	ReleaseDate string   `json:"release_date,omitempty"`
+	Genres      []string `json:"genres,omitempty"`
+	VoteAverage float64  `json:"vote_average,omitempty"`
+	Overview    string   `json:"overview,omitempty"`
+	Reasons     []string `json:"reasons,omitempty"`
 }
 
 type RankResponse struct {
 	UserID    int          `json:"user_id"`
 	MovieID   int          `json:"movie_id,omitempty"`
+	MovieIDs  []int        `json:"movie_ids,omitempty"`
 	Strategy  string       `json:"strategy"`
 	Results   []RankResult `json:"results"`
 	LatencyMS int64        `json:"latency_ms"`
@@ -98,8 +105,10 @@ type ScoreResponse struct {
 }
 
 type SearchResult struct {
-	MovieID int    `json:"movie_id"`
-	Title   string `json:"title"`
+	MovieID     int    `json:"movie_id"`
+	Title       string `json:"title"`
+	PosterURL   string `json:"poster_url,omitempty"`
+	ReleaseDate string `json:"release_date,omitempty"`
 }
 
 func main() {
@@ -217,9 +226,15 @@ func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	retrievalReady := a.Retrieval != nil
+	profileCount := len(a.UsersByID)
+	if retrievalReady {
+		profileCount = a.Retrieval.Users.Len()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":          "ok",
 		"retrieval_ready": retrievalReady,
+		"catalog_size":    len(a.Movies),
+		"profile_count":   profileCount,
 		"model_run": func() string {
 			if retrievalReady {
 				return a.Retrieval.ModelRun
@@ -251,24 +266,43 @@ func (a *App) handleRank(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.K = boundedK(req.K)
-	if req.UserID == nil && req.MovieID == nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id or movie_id required"})
+	if req.UserID == nil && req.MovieID == nil && len(req.MovieIDs) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user_id, movie_id, or movie_ids required"})
+		return
+	}
+	if len(req.MovieIDs) > 5 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "choose up to 5 favorite movies"})
+		return
+	}
+	if len(req.ExcludeMovieIDs) > 500 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "exclude_movie_ids is limited to 500 movies"})
 		return
 	}
 
 	var results []RankResult
 	var response RankResponse
 
-	if req.MovieID != nil && *req.MovieID > 0 {
+	if len(req.MovieIDs) > 0 {
+		var err error
+		results, response.Strategy, response.MovieIDs, err = a.rankMoviesByTaste(
+			req.MovieIDs,
+			req.K,
+			req.ExcludeMovieIDs,
+		)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+	} else if req.MovieID != nil && *req.MovieID > 0 {
 		seed, ok := a.MoviesByID[*req.MovieID]
 		if !ok {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "movie not found"})
 			return
 		}
-		results, response.Strategy = a.rankMoviesByMovie(seed, req.K)
+		results, response.Strategy = a.rankMoviesByMovieExcluding(seed, req.K, req.ExcludeMovieIDs)
 		response.MovieID = *req.MovieID
 	} else if req.UserID != nil && *req.UserID > 0 {
-		results, response.Strategy = a.rankMoviesForUser(*req.UserID, req.K)
+		results, response.Strategy = a.rankMoviesForUserExcluding(*req.UserID, req.K, req.ExcludeMovieIDs)
 		response.UserID = *req.UserID
 	} else {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid user_id or movie_id"})
@@ -309,6 +343,9 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
 			limit = parsed
 		}
+	}
+	if limit > 50 {
+		limit = 50
 	}
 	results := a.searchMovies(query, limit)
 	writeJSON(w, http.StatusOK, results)
@@ -360,19 +397,17 @@ func (a *App) rankMovies(user *UserFeatures, k int) []RankResult {
 	}
 	for i := 0; i < k; i++ {
 		m := scoredMovies[i].Movie
-		results = append(results, RankResult{
-			MovieID:   m.MovieID,
-			Score:     scoredMovies[i].Score,
-			Title:     m.Title,
-			PosterURL: joinPosterURL(a.PosterBase, m.TMDBPosterPath),
-			Reasons:   buildReasons(m, user),
-		})
+		results = append(results, a.rankResultForMovie(m, scoredMovies[i].Score, buildReasons(m, user)))
 	}
 
 	return results
 }
 
 func (a *App) rankMoviesForUser(userID int, k int) ([]RankResult, string) {
+	return a.rankMoviesForUserExcluding(userID, k, nil)
+}
+
+func (a *App) rankMoviesForUserExcluding(userID int, k int, explicitExclusions []int) ([]RankResult, string) {
 	if a.Retrieval != nil {
 		query := a.Retrieval.Users.Vector(userID)
 		if query != nil {
@@ -381,6 +416,7 @@ func (a *App) rankMoviesForUser(userID int, k int) ([]RankResult, string) {
 				retrieveK = a.RetrievalSize
 			}
 			exclude := a.Retrieval.History.ExcludeSet(userID)
+			addExclusions(exclude, explicitExclusions)
 			scores := a.Retrieval.Items.TopK(query, retrieveK, exclude)
 			if len(scores) > 0 {
 				if a.ModelAPIBase != "" {
@@ -405,24 +441,48 @@ func (a *App) rankMoviesForUser(userID int, k int) ([]RankResult, string) {
 		}
 	}
 
-	return a.rankColdStart(k), "popularity_fallback"
+	return a.rankColdStartExcluding(k, explicitExclusions), "popularity_fallback"
 }
 
 func (a *App) rankColdStart(k int) []RankResult {
+	return a.rankColdStartExcluding(k, nil)
+}
+
+func (a *App) rankColdStartExcluding(k int, exclusions []int) []RankResult {
 	if len(a.ColdStart) == 0 {
 		a.ColdStart = a.rankMovies(nil, 100)
 	}
-	if k > len(a.ColdStart) {
-		k = len(a.ColdStart)
+	if len(exclusions) == 0 {
+		if k > len(a.ColdStart) {
+			k = len(a.ColdStart)
+		}
+		return a.ColdStart[:k]
 	}
-	return a.ColdStart[:k]
+	exclude := make(map[int]bool, len(exclusions))
+	addExclusions(exclude, exclusions)
+	results := make([]RankResult, 0, k)
+	for _, result := range a.ColdStart {
+		if exclude[result.MovieID] {
+			continue
+		}
+		results = append(results, result)
+		if len(results) == k {
+			break
+		}
+	}
+	return results
 }
 
 func (a *App) rankMoviesByMovie(seed Movie, k int) ([]RankResult, string) {
+	return a.rankMoviesByMovieExcluding(seed, k, nil)
+}
+
+func (a *App) rankMoviesByMovieExcluding(seed Movie, k int, explicitExclusions []int) ([]RankResult, string) {
 	if a.Retrieval != nil {
 		query := a.Retrieval.Items.Vector(seed.MovieID)
 		if query != nil {
 			exclude := map[int]bool{seed.MovieID: true}
+			addExclusions(exclude, explicitExclusions)
 			scores := a.Retrieval.Items.TopK(query, k+64, exclude)
 			results := a.embeddingResults(scores, k, func(movie Movie) []string {
 				return buildMovieEmbeddingReasons(seed, movie)
@@ -432,7 +492,61 @@ func (a *App) rankMoviesByMovie(seed Movie, k int) ([]RankResult, string) {
 			}
 		}
 	}
-	return a.rankMoviesByMovieHeuristic(seed, k), "movie_heuristic_fallback"
+	return a.rankMoviesByMovieHeuristicExcluding(seed, k, explicitExclusions), "movie_heuristic_fallback"
+}
+
+func (a *App) rankMoviesByTaste(
+	movieIDs []int,
+	k int,
+	explicitExclusions []int,
+) ([]RankResult, string, []int, error) {
+	seeds := make([]Movie, 0, len(movieIDs))
+	uniqueIDs := make([]int, 0, len(movieIDs))
+	seen := make(map[int]bool, len(movieIDs))
+	for _, movieID := range movieIDs {
+		if movieID <= 0 || seen[movieID] {
+			continue
+		}
+		movie, ok := a.MoviesByID[movieID]
+		if !ok {
+			return nil, "", nil, fmt.Errorf("movie %d was not found", movieID)
+		}
+		seen[movieID] = true
+		seeds = append(seeds, movie)
+		uniqueIDs = append(uniqueIDs, movieID)
+	}
+	if len(seeds) == 0 {
+		return nil, "", nil, fmt.Errorf("choose at least one movie")
+	}
+
+	if a.Retrieval != nil {
+		query := make([]float32, a.Retrieval.Items.Dim())
+		vectorCount := 0
+		for _, movieID := range uniqueIDs {
+			vector := a.Retrieval.Items.Vector(movieID)
+			if vector == nil {
+				continue
+			}
+			for i, value := range vector {
+				query[i] += value
+			}
+			vectorCount++
+		}
+		if vectorCount > 0 && normalizeVector(query) {
+			exclude := make(map[int]bool, len(uniqueIDs)+len(explicitExclusions))
+			addExclusions(exclude, uniqueIDs)
+			addExclusions(exclude, explicitExclusions)
+			scores := a.Retrieval.Items.TopK(query, k+64, exclude)
+			results := a.embeddingResults(scores, k, func(movie Movie) []string {
+				return buildTasteEmbeddingReasons(seeds, movie)
+			})
+			if len(results) > 0 {
+				return results, "two_tower_taste_mix", uniqueIDs, nil
+			}
+		}
+	}
+
+	return a.rankMoviesByTasteHeuristic(seeds, k, explicitExclusions), "taste_mix_heuristic_fallback", uniqueIDs, nil
 }
 
 func (a *App) embeddingResults(
@@ -446,13 +560,7 @@ func (a *App) embeddingResults(
 		if !ok {
 			continue
 		}
-		results = append(results, RankResult{
-			MovieID:   movie.MovieID,
-			Score:     scored.Score,
-			Title:     movie.Title,
-			PosterURL: joinPosterURL(a.PosterBase, movie.TMDBPosterPath),
-			Reasons:   reasonBuilder(movie),
-		})
+		results = append(results, a.rankResultForMovie(movie, scored.Score, reasonBuilder(movie)))
 		if len(results) == k {
 			break
 		}
@@ -461,7 +569,14 @@ func (a *App) embeddingResults(
 }
 
 func (a *App) rankMoviesByMovieHeuristic(seed Movie, k int) []RankResult {
+	return a.rankMoviesByMovieHeuristicExcluding(seed, k, nil)
+}
+
+func (a *App) rankMoviesByMovieHeuristicExcluding(seed Movie, k int, explicitExclusions []int) []RankResult {
 	results := make([]RankResult, 0, k)
+	exclude := make(map[int]bool, len(explicitExclusions)+1)
+	exclude[seed.MovieID] = true
+	addExclusions(exclude, explicitExclusions)
 
 	type scored struct {
 		Movie Movie
@@ -469,7 +584,7 @@ func (a *App) rankMoviesByMovieHeuristic(seed Movie, k int) []RankResult {
 	}
 	scoredMovies := make([]scored, 0, len(a.Movies))
 	for _, m := range a.Movies {
-		if m.MovieID == seed.MovieID {
+		if exclude[m.MovieID] {
 			continue
 		}
 		scoredMovies = append(scoredMovies, scored{Movie: m, Score: scoreMovieSimilarity(seed, m)})
@@ -484,15 +599,52 @@ func (a *App) rankMoviesByMovieHeuristic(seed Movie, k int) []RankResult {
 	}
 	for i := 0; i < k; i++ {
 		m := scoredMovies[i].Movie
-		results = append(results, RankResult{
-			MovieID:   m.MovieID,
-			Score:     scoredMovies[i].Score,
-			Title:     m.Title,
-			PosterURL: joinPosterURL(a.PosterBase, m.TMDBPosterPath),
-			Reasons:   buildMovieReasons(seed, m),
-		})
+		results = append(results, a.rankResultForMovie(m, scoredMovies[i].Score, buildMovieReasons(seed, m)))
 	}
 
+	return results
+}
+
+func (a *App) rankMoviesByTasteHeuristic(seeds []Movie, k int, explicitExclusions []int) []RankResult {
+	results := make([]RankResult, 0, k)
+	exclude := make(map[int]bool, len(seeds)+len(explicitExclusions))
+	for _, seed := range seeds {
+		exclude[seed.MovieID] = true
+	}
+	addExclusions(exclude, explicitExclusions)
+
+	type scored struct {
+		Movie Movie
+		Score float64
+	}
+	scoredMovies := make([]scored, 0, len(a.Movies))
+	for _, movie := range a.Movies {
+		if exclude[movie.MovieID] {
+			continue
+		}
+		score := 0.0
+		for _, seed := range seeds {
+			score += scoreMovieSimilarity(seed, movie)
+		}
+		scoredMovies = append(scoredMovies, scored{Movie: movie, Score: score / float64(len(seeds))})
+	}
+	sort.Slice(scoredMovies, func(i, j int) bool {
+		if scoredMovies[i].Score == scoredMovies[j].Score {
+			return scoredMovies[i].Movie.MovieID < scoredMovies[j].Movie.MovieID
+		}
+		return scoredMovies[i].Score > scoredMovies[j].Score
+	})
+	if k > len(scoredMovies) {
+		k = len(scoredMovies)
+	}
+	for i := 0; i < k; i++ {
+		movie := scoredMovies[i].Movie
+		results = append(results, a.rankResultForMovie(
+			movie,
+			scoredMovies[i].Score,
+			buildTasteEmbeddingReasons(seeds, movie),
+		))
+	}
 	return results
 }
 
@@ -540,13 +692,7 @@ func (a *App) rankMoviesWithModel(userID int, k int, candidates []int) ([]RankRe
 		if ok {
 			userPtr = &user
 		}
-		scored = append(scored, RankResult{
-			MovieID:   movie.MovieID,
-			Score:     item.Score,
-			Title:     movie.Title,
-			PosterURL: joinPosterURL(a.PosterBase, movie.TMDBPosterPath),
-			Reasons:   buildReasons(movie, userPtr),
-		})
+		scored = append(scored, a.rankResultForMovie(movie, item.Score, buildReasons(movie, userPtr)))
 	}
 
 	sort.Slice(scored, func(i, j int) bool {
@@ -556,6 +702,20 @@ func (a *App) rankMoviesWithModel(userID int, k int, candidates []int) ([]RankRe
 		k = len(scored)
 	}
 	return scored[:k], nil
+}
+
+func (a *App) rankResultForMovie(movie Movie, score float64, reasons []string) RankResult {
+	return RankResult{
+		MovieID:     movie.MovieID,
+		Score:       score,
+		Title:       movie.Title,
+		PosterURL:   joinPosterURL(a.PosterBase, movie.TMDBPosterPath),
+		ReleaseDate: movie.TMDBRelease,
+		Genres:      genreList(movie),
+		VoteAverage: movie.TMDBVoteAvg,
+		Overview:    strings.TrimSpace(movie.TMDBOverview),
+		Reasons:     reasons,
+	}
 }
 
 func (a *App) scoreMovie(m Movie, user *UserFeatures) float64 {
@@ -604,6 +764,20 @@ func buildMovieEmbeddingReasons(seed Movie, candidate Movie) []string {
 	}
 	if candidate.RatingCount >= 1000 {
 		reasons = append(reasons, "popular_in_movielens")
+	}
+	return reasons
+}
+
+func buildTasteEmbeddingReasons(seeds []Movie, candidate Movie) []string {
+	reasons := []string{"matches_your_movie_mix"}
+	for _, seed := range seeds {
+		if genreSimilarity(seed, candidate) >= 0.4 {
+			reasons = append(reasons, "shares_genres_with_your_picks")
+			break
+		}
+	}
+	if candidate.TMDBVoteAvg >= 7.5 {
+		reasons = append(reasons, "well_reviewed")
 	}
 	return reasons
 }
@@ -676,6 +850,45 @@ func parseGenres(raw string) map[string]bool {
 	return out
 }
 
+func genreList(movie Movie) []string {
+	raw := preferGenres(movie)
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, "|")
+	genres := make([]string, 0, len(parts))
+	for _, part := range parts {
+		genre := strings.TrimSpace(part)
+		if genre != "" {
+			genres = append(genres, genre)
+		}
+	}
+	return genres
+}
+
+func addExclusions(exclude map[int]bool, movieIDs []int) {
+	for _, movieID := range movieIDs {
+		if movieID > 0 {
+			exclude[movieID] = true
+		}
+	}
+}
+
+func normalizeVector(vector []float32) bool {
+	normSquared := 0.0
+	for _, value := range vector {
+		normSquared += float64(value * value)
+	}
+	if normSquared == 0 || math.IsNaN(normSquared) || math.IsInf(normSquared, 0) {
+		return false
+	}
+	inverseNorm := float32(1 / math.Sqrt(normSquared))
+	for i := range vector {
+		vector[i] *= inverseNorm
+	}
+	return true
+}
+
 func (a *App) searchMovies(query string, limit int) []SearchResult {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
@@ -710,8 +923,10 @@ func (a *App) searchMovies(query string, limit int) []SearchResult {
 	results := make([]SearchResult, 0, limit)
 	for i := 0; i < limit; i++ {
 		results = append(results, SearchResult{
-			MovieID: scoredMovies[i].Movie.MovieID,
-			Title:   scoredMovies[i].Movie.Title,
+			MovieID:     scoredMovies[i].Movie.MovieID,
+			Title:       scoredMovies[i].Movie.Title,
+			PosterURL:   joinPosterURL(a.PosterBase, scoredMovies[i].Movie.TMDBPosterPath),
+			ReleaseDate: scoredMovies[i].Movie.TMDBRelease,
 		})
 	}
 	return results
@@ -860,10 +1075,18 @@ func parseInt(row []string, idx map[string]int, col string) int {
 		return 0
 	}
 	parsed, err := strconv.Atoi(val)
-	if err != nil {
+	if err == nil {
+		return parsed
+	}
+	// Pandas writes integer-valued nullable columns as values such as
+	// "68997.0". Accept those without silently turning every count into zero.
+	floatValue, floatErr := strconv.ParseFloat(val, 64)
+	maxInt := float64(int(^uint(0) >> 1))
+	minInt := -maxInt - 1
+	if floatErr != nil || math.Trunc(floatValue) != floatValue || floatValue > maxInt || floatValue < minInt {
 		return 0
 	}
-	return parsed
+	return int(floatValue)
 }
 
 func parseFloat(row []string, idx map[string]int, col string) float64 {
@@ -911,6 +1134,8 @@ func parseAllowedOrigins(raw string) map[string]bool {
 	defaults := []string{
 		"http://localhost:3000",
 		"http://localhost:3001",
+		"http://127.0.0.1:3000",
+		"http://127.0.0.1:3001",
 	}
 	allowed := make(map[string]bool, len(defaults))
 	for _, origin := range defaults {

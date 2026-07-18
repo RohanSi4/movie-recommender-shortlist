@@ -1,4 +1,4 @@
-.PHONY: help venv install ingest enrich features training train train-retrieval export export-retrieval model-service service frontend metrics-eval metrics-retrieval metrics-scale metrics-latency metrics-compare test-service
+.PHONY: help venv install ingest enrich features training train train-retrieval export export-retrieval model-service service frontend metrics-eval metrics-retrieval metrics-scale metrics-latency metrics-compare test-service test-frontend test
 
 help:
 	@echo "make venv            - create + activate venv + install deps (macOS/zsh)"
@@ -20,6 +20,8 @@ help:
 	@echo "make metrics-scale   - dataset scale stats"
 	@echo "make metrics-latency - API latency bench (server must be running)"
 	@echo "make test-service    - run Go serving and exporter tests"
+	@echo "make test-frontend   - run lint, types, build, Playwright, and Axe"
+	@echo "make test            - run every service and frontend check"
 
 venv:
 	python3 -m venv .venv
@@ -79,3 +81,11 @@ metrics-latency:
 test-service:
 	cd service && go test ./...
 	python -m unittest discover -s ml/tests
+
+test-frontend:
+	cd frontend && npm run lint
+	cd frontend && npm run typecheck
+	cd frontend && npm run build
+	cd frontend && npm run test:e2e
+
+test: test-service test-frontend

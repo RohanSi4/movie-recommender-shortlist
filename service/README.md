@@ -1,7 +1,7 @@
 # Go Ranking Service
 
-Go service for exact learned retrieval, movie similarity, and optional
-LightGBM reranking.
+Go service for multi-movie taste blending, exact learned retrieval, movie
+similarity, and optional LightGBM reranking.
 
 ## Data
 The service reads CSVs from `service/data/`:
@@ -43,7 +43,7 @@ Env vars:
 - `CANDIDATE_POOL_SIZE` (default 2000, used before optional LightGBM reranking)
 - `MEMORY_LIMIT_MB` (default 384, leaves headroom on a 512 MB instance)
 - `CORS_ALLOWED_ORIGINS` (comma-separated production frontend origins; local
-  defaults are `http://localhost:3000` and `http://localhost:3001`)
+  defaults cover `localhost` and `127.0.0.1` on ports 3000 and 3001)
 
 For Render, create a Go Web Service with:
 ```bash
@@ -57,8 +57,10 @@ CORS_ALLOWED_ORIGINS=https://movie-recommender-demo.vercel.app
 ```
 
 ## Endpoints
-- `POST /rank` -> body `{ "user_id": 123, "k": 25 }` (MovieLens user id)  
+- `POST /rank` -> body `{ "user_id": 123, "k": 25 }` (MovieLens user id)
   or `{ "movie_id": 550, "k": 25 }` (movie-based similar titles)
+  or `{ "movie_ids": [2571, 164179, 202439], "k": 25 }` (temporary taste mix)
+- Add `"exclude_movie_ids": [1, 2, 3]` to any rank request for a fresh batch
 - `GET /search?q=matrix&limit=10`
 - `GET /movie/{movie_id}`
 - `GET /health`
@@ -75,3 +77,8 @@ server time and client round-trip time.
 
 The cold-start list is computed once when the service loads. It does not rescore
 and sort the full catalog on every unknown-user request.
+
+Movie counts exported by pandas may arrive as integer-shaped values such as
+`68997.0`. The loader accepts that representation, and the exporter now writes
+integer count columns directly. Tests protect search ordering, popularity
+reasons, and fallback ranking from silently losing those counts again.

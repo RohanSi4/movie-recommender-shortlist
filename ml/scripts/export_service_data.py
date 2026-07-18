@@ -67,6 +67,17 @@ def ensure_columns(df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
     return df[cols]
 
 
+def normalize_count_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Keep count columns integer-shaped so every serving language reads them safely."""
+    normalized = df.copy()
+    counts = pd.to_numeric(normalized["rating_count"], errors="coerce")
+    fractional = counts.dropna() % 1 != 0
+    if fractional.any():
+        raise ValueError("rating_count contains non-integer values")
+    normalized["rating_count"] = counts.astype("Int64")
+    return normalized
+
+
 def main() -> None:
     args = parse_args()
     movies = load_parquet(args.features_dir / "movie_features.parquet")
@@ -80,8 +91,8 @@ def main() -> None:
     movie_out = args.out_dir / "movie_features.csv"
     user_out = args.out_dir / "user_features.csv"
 
-    ensure_columns(movies, MOVIE_COLUMNS).to_csv(movie_out, index=False)
-    ensure_columns(users, USER_COLUMNS).to_csv(user_out, index=False)
+    normalize_count_column(ensure_columns(movies, MOVIE_COLUMNS)).to_csv(movie_out, index=False)
+    normalize_count_column(ensure_columns(users, USER_COLUMNS)).to_csv(user_out, index=False)
 
     print("Done.")
     print(f"  {movie_out}")

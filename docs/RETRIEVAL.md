@@ -66,6 +66,10 @@ does not allocate and sort the full catalog on every request.
 Known-user requests exclude the user's stored history before returning the
 shortlist. Unknown users take the existing popularity fallback. Movie-based
 queries use item-to-item cosine similarity and always exclude the seed title.
+The public taste builder accepts one to five movies, averages their item
+vectors, normalizes the combined query, and excludes every seed before the
+same exact retrieval scan. This gives a new visitor a useful personal query
+without pretending they have an existing user embedding.
 If `MODEL_API_BASE` is configured, LightGBM reranks the retrieved candidates;
 if that service fails, the API returns the learned retrieval order.
 

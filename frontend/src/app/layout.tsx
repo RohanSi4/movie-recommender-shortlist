@@ -15,8 +15,23 @@ const fraunces = Fraunces({
 });
 
 export const metadata: Metadata = {
-  title: "Personalized Movie Ranking",
-  description: "Demo UI for a personalized movie ranking service.",
+  metadataBase: new URL("https://movie-reccomender-system-red.vercel.app"),
+  title: "Shortlist | Find your next movie",
+  description:
+    "Pick a few movies you love and get a personal shortlist from an ML model trained on MovieLens ratings.",
+  alternates: { canonical: "/" },
+  openGraph: {
+    title: "Shortlist | Find your next movie",
+    description: "Mix a few favorites and get a fresh movie shortlist built around your taste.",
+    url: "/",
+    siteName: "Shortlist",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Shortlist | Find your next movie",
+    description: "Mix a few favorites and get a fresh movie shortlist built around your taste.",
+  },
 };
 
 export default function RootLayout({
@@ -25,10 +40,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={`${spaceGrotesk.variable} ${fraunces.variable} antialiased`}>
-        {children}
-      </body>
+    <html lang="en" className={`${spaceGrotesk.variable} ${fraunces.variable}`}>
+      <body>{children}</body>
     </html>
   );
 }

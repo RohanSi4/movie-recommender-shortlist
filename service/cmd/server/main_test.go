@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -147,5 +148,140 @@ func TestRankHandlerCapsK(t *testing.T) {
 	}
 	if len(response.Results) > 100 {
 		t.Fatalf("returned %d results, want at most 100", len(response.Results))
+	}
+}
+
+func TestTasteMixUsesMultipleMoviesAndExcludesSeeds(t *testing.T) {
+	app := retrievalTestApp(t)
+	results, strategy, seedIDs, err := app.rankMoviesByTaste([]int{1, 3, 1}, 2, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strategy != "two_tower_taste_mix" {
+		t.Fatalf("strategy = %q, want two_tower_taste_mix", strategy)
+	}
+	if len(seedIDs) != 2 || seedIDs[0] != 1 || seedIDs[1] != 3 {
+		t.Fatalf("seed ids = %v, want [1 3]", seedIDs)
+	}
+	if len(results) != 2 {
+		t.Fatalf("results = %v, want 2", results)
+	}
+	for _, result := range results {
+		if result.MovieID == 1 || result.MovieID == 3 {
+			t.Fatalf("seed movie leaked into taste results: %+v", results)
+		}
+	}
+}
+
+func TestTasteMixHonorsExplicitExclusions(t *testing.T) {
+	app := retrievalTestApp(t)
+	results, _, _, err := app.rankMoviesByTaste([]int{1, 3}, 2, []int{2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, result := range results {
+		if result.MovieID == 2 {
+			t.Fatalf("explicitly excluded movie leaked into results: %+v", results)
+		}
+	}
+}
+
+func TestRankHandlerReturnsRichTasteResults(t *testing.T) {
+	app := retrievalTestApp(t)
+	movie := app.MoviesByID[2]
+	movie.TMDBRelease = "2024-03-01"
+	movie.TMDBGenres = "Drama|Mystery"
+	movie.TMDBVoteAvg = 8.1
+	movie.TMDBOverview = "A useful overview."
+	app.MoviesByID[2] = movie
+	for i := range app.Movies {
+		if app.Movies[i].MovieID == movie.MovieID {
+			app.Movies[i] = movie
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/rank", strings.NewReader(`{"movie_ids":[1,3],"k":2}`))
+	recorder := httptest.NewRecorder()
+	app.handleRank(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response RankResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Strategy != "two_tower_taste_mix" || len(response.MovieIDs) != 2 {
+		t.Fatalf("unexpected taste response: %+v", response)
+	}
+	if len(response.Results) == 0 {
+		t.Fatal("expected taste results")
+	}
+	for _, result := range response.Results {
+		if result.MovieID == 2 {
+			if result.ReleaseDate != "2024-03-01" || result.VoteAverage != 8.1 || result.Overview == "" || len(result.Genres) != 2 {
+				t.Fatalf("movie metadata missing from result: %+v", result)
+			}
+			return
+		}
+	}
+	t.Fatalf("enriched movie missing from response: %+v", response.Results)
+}
+
+func TestRankHandlerLimitsTasteInputs(t *testing.T) {
+	app := retrievalTestApp(t)
+	request := httptest.NewRequest(http.MethodPost, "/rank", strings.NewReader(`{"movie_ids":[1,2,3,4,5,6],"k":2}`))
+	recorder := httptest.NewRecorder()
+	app.handleRank(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestParseIntAcceptsIntegerShapedCSVFloats(t *testing.T) {
+	row := []string{"68997.0"}
+	index := map[string]int{"rating_count": 0}
+	if got := parseInt(row, index, "rating_count"); got != 68997 {
+		t.Fatalf("parseInt() = %d, want 68997", got)
+	}
+	row[0] = "3.5"
+	if got := parseInt(row, index, "rating_count"); got != 0 {
+		t.Fatalf("parseInt() accepted fractional count: %d", got)
+	}
+}
+
+func TestSearchHandlerCapsLimit(t *testing.T) {
+	app := &App{Movies: make([]Movie, 0, 75), PosterBase: "https://example.com"}
+	for id := 1; id <= 75; id++ {
+		app.Movies = append(app.Movies, Movie{MovieID: id, Title: fmt.Sprintf("Test Movie %d", id)})
+	}
+	request := httptest.NewRequest(http.MethodGet, "/search?q=test&limit=1000", nil)
+	recorder := httptest.NewRecorder()
+	app.handleSearch(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var results []SearchResult
+	if err := json.Unmarshal(recorder.Body.Bytes(), &results); err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 50 {
+		t.Fatalf("returned %d search results, want 50", len(results))
+	}
+}
+
+func TestMovieHandlerUsesPublicJSONFields(t *testing.T) {
+	app := &App{MoviesByID: map[int]Movie{1: {MovieID: 1, Title: "Toy Story", RatingCount: 68997}}}
+	request := httptest.NewRequest(http.MethodGet, "/movie/1", nil)
+	recorder := httptest.NewRecorder()
+	app.handleMovie(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, `"movie_id":1`) || !strings.Contains(body, `"rating_count":68997`) {
+		t.Fatalf("missing public JSON fields: %s", body)
+	}
+	if strings.Contains(body, "MovieID") || strings.Contains(body, "RatingCount") {
+		t.Fatalf("leaked Go field names: %s", body)
 	}
 }
