@@ -120,6 +120,21 @@ func TestColdStartUsesPopularityFallback(t *testing.T) {
 	}
 }
 
+func TestColdStartCanBackfillAfterMaximumExclusions(t *testing.T) {
+	app := &App{ColdStart: make([]RankResult, 600)}
+	exclusions := make([]int, 500)
+	for index := range app.ColdStart {
+		app.ColdStart[index] = RankResult{MovieID: index + 1}
+		if index < len(exclusions) {
+			exclusions[index] = index + 1
+		}
+	}
+	results := app.rankColdStartExcluding(100, exclusions)
+	if len(results) != 100 || results[0].MovieID != 501 || results[99].MovieID != 600 {
+		t.Fatalf("fallback did not refill after exclusions: %+v", results)
+	}
+}
+
 func TestMovieSimilarityUsesEmbeddingAndExcludesSeed(t *testing.T) {
 	app := retrievalTestApp(t)
 	results, strategy := app.rankMoviesByMovie(app.MoviesByID[1], 2)

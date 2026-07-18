@@ -409,7 +409,7 @@ export function RecommenderApp() {
             <p className="eyebrow">A real model behind a simple screen</p>
             <h2>Not a hardcoded list in a nice jacket.</h2>
             <p>
-              Shortlist learns a shared taste space from MovieLens ratings, retrieves against the full catalog in Go, and adds TMDB details so the results feel like movies instead of database rows.
+              Shortlist trains on the same one-to-five favorites flow you use here, retrieves against the full catalog in Go, and adds TMDB details so the results feel like movies instead of database rows.
             </p>
             <div className="proof-links">
               <a href="https://github.com/RohanSi4/movie-recommender-shortlist" target="_blank" rel="noreferrer">
@@ -423,8 +423,8 @@ export function RecommenderApp() {
           <dl className="proof-stats">
             <div><dt>Movies searched</dt><dd>87,585</dd></div>
             <div><dt>Learned profiles</dt><dd>186,458</dd></div>
-            <div><dt>Recall@100</dt><dd>0.229<small>vs. 0.127 popularity</small></dd></div>
-            <div><dt>Local median</dt><dd>4.2 ms<small>known viewer retrieval</small></dd></div>
+            <div><dt>HitRate@10</dt><dd>84.1%<small>five-favorite test flow</small></dd></div>
+            <div><dt>Recall@100</dt><dd>0.331<small>vs. 0.228 popularity</small></dd></div>
           </dl>
         </section>
 

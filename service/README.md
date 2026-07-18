@@ -26,7 +26,7 @@ python ml/scripts/export_service_data.py \
   --out-dir service/data
 
 python ml/scripts/export_embeddings.py \
-  --model-dir ml/models/two_tower_logq \
+  --model-dir ml/models/two_tower_taste \
   --processed-dir ml/data/processed \
   --out-dir service/data
 ```

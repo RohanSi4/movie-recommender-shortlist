@@ -1,19 +1,19 @@
 {
   "format_version": 1,
-  "model_run": "2d24299b846f9a7b",
+  "model_run": "8f0e30d84f1e00db",
   "val_fraction": 0.1,
   "seen_policy": "all_ratings_in_training_window",
   "files": {
     "items": {
       "name": "item_embeddings.bin",
-      "sha256": "896e57a4add42cc9778628d9d8d9986a3c8b4cf264417b58b6ef680952164f39",
+      "sha256": "8bc2a597c52d283902736c48bae11a9dd17432663dcc1c2c047570c7e26d3c39",
       "count": 87585,
       "dim": 64,
       "dtype": "float16"
     },
     "users": {
       "name": "user_embeddings.bin",
-      "sha256": "f2fbc6041087954728c3a8ef1c3488cec8344a232776d7560c2f9d3b21158ff9",
+      "sha256": "ac8d7cbe1304f751c795a6e01d4358fa0edec8ce0bae5c50b8b51561ba7b4d74",
       "count": 186458,
       "dim": 64,
       "dtype": "float16"

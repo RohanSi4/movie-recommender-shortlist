@@ -14,6 +14,7 @@ Go API, and Next.js product all live in this repository.
 ## What it does
 
 - Builds a taste profile from one to five movies a visitor already loves
+- Trains that exact favorite-movie mix to retrieve another movie the viewer liked
 - Blends their learned item embeddings and searches the full catalog in one pass
 - Recommends movies for an anonymous MovieLens viewer from their historical ratings
 - Filters out movies that user already rated
@@ -23,12 +24,14 @@ Go API, and Next.js product all live in this repository.
 - Lets visitors save a shortlist locally, dismiss misses, open details, and ask for a fresh batch
 - Serves the current live ranking path through a low-latency Go API
 
-I built the data pipeline, models, API, and web app. The two-tower retriever
-reached 0.229 recall@100 against 0.127 for popularity on the same held-out
-sample. In a 200-request local benchmark, known-user requests had a 4.3 ms
-median and 5.8 ms p95 client round trip. Movie-similarity requests had a 3.5 ms
-median. The offline LightGBM ranker also beat the heuristic baseline by 11.8%.
-The committed [retrieval evaluation](docs/metrics/retrieval_eval.json) and
+I built the data pipeline, models, API, and web app. On an untouched test cohort
+of 7,060 future users, the live five-favorite flow reached 84.1% HitRate@10,
+0.338 NDCG@10, and 0.331 Recall@100. The same popularity baseline reached 73.8%,
+0.254, and 0.228. The stored-user retriever also reached 0.237 Recall@100 against
+0.127 for popularity. In a 200-request local benchmark, known-user requests had
+a 4.0 ms median and 5.6 ms p95 client round trip. The committed
+[taste evaluation](docs/metrics/taste_eval_test.json),
+[warm-user evaluation](docs/metrics/retrieval_eval.json), and
 [latency results](docs/metrics/retrieval_latency.json) keep those claims
 checkable.
 
@@ -39,7 +42,7 @@ MovieLens ratings + TMDB metadata
                 |
                 v
 Python ML pipeline
-  feature engineering, two-tower retrieval, LightGBM ranking
+  user-balanced training, warm-user retrieval, 1-to-5 favorite taste training
                 |
                 v
 Verified serving bundle
@@ -54,17 +57,20 @@ Next.js app
   favorite picker, personal shortlist, details, saved movies
 ~~~
 
-The public demo serves the learned two-tower retrieval model directly in Go.
-New visitors can choose up to five favorites. The service averages and
-normalizes those movie vectors into one temporary taste profile, excludes the
-chosen movies, and retrieves a new shortlist from the full catalog. No account
-or personal data is needed.
+The public demo serves the learned retriever directly in Go. During training,
+one objective learns stored viewer profiles while a second samples one to five
+liked movies, averages them exactly as the product does, and predicts another
+liked movie. New visitors therefore use a behavior the model was explicitly
+trained for. The service keeps the taste profile temporary, excludes the chosen
+movies, and searches the full catalog. No account or personal data is needed.
 
 Known users get personalized candidates from the full 87,585-movie catalog,
-with their training-window history removed. Movie search uses the same learned
-item space for similarity. Users outside the trained vocabulary fall back to
-the feature-table popularity heuristic. LightGBM reranking remains optional
-and is only used when `MODEL_API_BASE` is configured.
+with their training-window history removed. User-balanced batches stop highly
+active viewers from dominating training, de-duplicated targets make each batch
+more useful, and log-Q is calculated for the actual sampler. Movie search uses
+the same learned item space for similarity. Users outside the trained vocabulary
+fall back to the feature-table popularity heuristic. LightGBM reranking remains
+optional and is only used when `MODEL_API_BASE` is configured.
 
 ## Run it locally
 
@@ -112,6 +118,7 @@ make train
 make export
 make train-retrieval
 make metrics-retrieval
+make metrics-taste
 make export-retrieval
 ~~~
 
@@ -131,6 +138,8 @@ MODEL_API_BASE=http://localhost:8090 go run ./cmd/server
 ~~~bash
 make metrics-eval
 make metrics-compare
+make metrics-retrieval
+make metrics-taste
 make metrics-scale
 make metrics-latency
 make test-service
@@ -141,8 +150,12 @@ npm run build
 npm run test:e2e
 ~~~
 
-The evaluation and serving paths stay separate on purpose. Offline metrics show
-whether the model learned something useful; the live app shows whether the whole
+The evaluation and serving paths stay separate on purpose. The product-aligned
+test freezes the training cutoff, finds users with no pre-cutoff history, uses
+their earliest one, three, or five future favorites as seeds, and treats their
+later favorites as truth. Validation and test users are split deterministically,
+and the test cohort is only used after model selection. Offline metrics show
+whether the model learned something useful; the live app shows whether the full
 system is understandable and fast enough to use.
 
 ## Main API routes

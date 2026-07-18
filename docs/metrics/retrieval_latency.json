@@ -5,15 +5,15 @@
   "warmups_per_mode": 20,
   "k": 25,
   "known_user": {
-    "client_round_trip_ms": { "p50": 4.247, "p95": 5.791, "p99": 6.4, "mean": 4.453 },
-    "server_reported_ms": { "p50": 3.0, "p95": 5.0, "p99": 5.0, "mean": 3.48 }
+    "client_round_trip_ms": { "p50": 4.02, "p95": 5.647, "p99": 6.015, "mean": 4.255 },
+    "server_reported_ms": { "p50": 3.0, "p95": 5.0, "p99": 5.0, "mean": 3.37 }
   },
   "cold_user": {
-    "client_round_trip_ms": { "p50": 0.352, "p95": 0.408, "p99": 0.45, "mean": 0.358 },
+    "client_round_trip_ms": { "p50": 0.359, "p95": 0.392, "p99": 0.42, "mean": 0.363 },
     "server_reported_ms": { "p50": 0.0, "p95": 0.0, "p99": 0.0, "mean": 0.0 }
   },
   "movie_similarity": {
-    "client_round_trip_ms": { "p50": 3.459, "p95": 3.593, "p99": 3.699, "mean": 3.471 },
-    "server_reported_ms": { "p50": 3.0, "p95": 3.0, "p99": 3.0, "mean": 2.83 }
+    "client_round_trip_ms": { "p50": 3.433, "p95": 3.888, "p99": 4.149, "mean": 3.5 },
+    "server_reported_ms": { "p50": 3.0, "p95": 3.0, "p99": 3.0, "mean": 2.845 }
   }
 }

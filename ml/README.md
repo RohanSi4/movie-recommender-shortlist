@@ -100,6 +100,35 @@ This writes:
 - `ml/models/feature_columns.json`
 - `ml/models/metrics.json`
 
+## Train Retrieval
+
+The retrieval model learns stored-user queries and the public one-to-five
+favorite taste query together:
+
+```bash
+python ml/scripts/train_two_tower.py \
+  --processed-dir ml/data/processed \
+  --out-dir ml/models/two_tower_taste \
+  --epochs 3 --batch-size 1024 \
+  --sampling-strategy user-balanced \
+  --taste-loss-weight 0.5
+```
+
+Evaluate both paths separately:
+
+```bash
+python ml/scripts/evaluate_retrieval.py \
+  --processed-dir ml/data/processed \
+  --model-dir ml/models/two_tower_taste \
+  --out docs/metrics/retrieval_eval.json
+
+python ml/scripts/evaluate_taste_retrieval.py \
+  --processed-dir ml/data/processed \
+  --model-dir ml/models/two_tower_taste \
+  --cohort test --max-users 0 \
+  --out docs/metrics/taste_eval_test.json
+```
+
 ## Export for Go Service
 Run:
 ```bash
@@ -136,5 +165,5 @@ python ml/scripts/report_dataset_stats.py \
 
 ## Notes
 - `user_id` values in the UI come from MovieLens (not a TMDB account).
-- The Go service currently uses heuristic scoring over exported features; the
-  LightGBM model is trained offline and saved in `ml/models/`.
+- The Go service serves the exported retrieval vectors directly. LightGBM is an
+  optional known-user reranker and is not used for the public favorite-movie flow.

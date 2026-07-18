@@ -1,4 +1,4 @@
-.PHONY: help venv install ingest enrich features training train train-retrieval export export-retrieval model-service service frontend metrics-eval metrics-retrieval metrics-scale metrics-latency metrics-compare test-service test-frontend test
+.PHONY: help venv install ingest enrich features training train train-retrieval export export-retrieval model-service service frontend metrics-eval metrics-retrieval metrics-taste metrics-scale metrics-latency metrics-compare test-service test-frontend test
 
 help:
 	@echo "make venv            - create + activate venv + install deps (macOS/zsh)"
@@ -16,6 +16,7 @@ help:
 	@echo "make frontend        - run Next.js UI"
 	@echo "make metrics-eval    - offline NDCG model vs baseline"
 	@echo "make metrics-retrieval - offline two-tower recall vs baselines"
+	@echo "make metrics-taste   - anonymous 1/3/5-favorite test-cohort metrics"
 	@echo "make metrics-compare - offline NDCG model vs heuristic"
 	@echo "make metrics-scale   - dataset scale stats"
 	@echo "make metrics-latency - API latency bench (server must be running)"
@@ -46,13 +47,13 @@ train:
 	python ml/scripts/train_lightgbm.py --training-dir ml/data/processed/training --out-dir ml/models --max-per-user 5000
 
 train-retrieval:
-	python ml/scripts/train_two_tower.py --processed-dir ml/data/processed --out-dir ml/models/two_tower_logq --epochs 6 --batch-size 4096
+	python ml/scripts/train_two_tower.py --processed-dir ml/data/processed --out-dir ml/models/two_tower_taste --epochs 3 --batch-size 1024 --sampling-strategy user-balanced --taste-loss-weight 0.5
 
 export:
 	python ml/scripts/export_service_data.py --features-dir ml/data/processed/features --out-dir service/data
 
 export-retrieval:
-	python ml/scripts/export_embeddings.py --model-dir ml/models/two_tower_logq --processed-dir ml/data/processed --out-dir service/data
+	python ml/scripts/export_embeddings.py --model-dir ml/models/two_tower_taste --processed-dir ml/data/processed --out-dir service/data
 
 model-service:
 	uvicorn model_service.app:app --host 0.0.0.0 --port 8090
@@ -70,7 +71,10 @@ metrics-compare:
 	python ml/scripts/compare_heuristic_vs_model.py --training-dir ml/data/processed/training --model-dir ml/models --ndcg-k 10
 
 metrics-retrieval:
-	python ml/scripts/evaluate_retrieval.py --processed-dir ml/data/processed --model-dir ml/models/two_tower_logq --out ml/models/two_tower_logq/retrieval_eval.json
+	python ml/scripts/evaluate_retrieval.py --processed-dir ml/data/processed --model-dir ml/models/two_tower_taste --out docs/metrics/retrieval_eval.json
+
+metrics-taste:
+	python ml/scripts/evaluate_taste_retrieval.py --processed-dir ml/data/processed --model-dir ml/models/two_tower_taste --cohort test --max-users 0 --out docs/metrics/taste_eval_test.json
 
 metrics-scale:
 	python ml/scripts/report_dataset_stats.py --processed-dir ml/data/processed --features-dir ml/data/processed/features

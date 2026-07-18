@@ -199,7 +199,9 @@ func (a *App) LoadData() error {
 	for _, u := range users {
 		a.UsersByID[u.UserID] = u
 	}
-	a.ColdStart = a.rankMovies(nil, 100)
+	// Keep enough cached fallback results to honor the API's maximum 500
+	// exclusions and still return a full 100-movie response.
+	a.ColdStart = a.rankMovies(nil, 600)
 
 	log.Printf("Loaded %d movies, %d users", len(movies), len(users))
 	bundle, err := retrieval.LoadBundle(a.DataDir)
@@ -450,7 +452,7 @@ func (a *App) rankColdStart(k int) []RankResult {
 
 func (a *App) rankColdStartExcluding(k int, exclusions []int) []RankResult {
 	if len(a.ColdStart) == 0 {
-		a.ColdStart = a.rankMovies(nil, 100)
+		a.ColdStart = a.rankMovies(nil, 600)
 	}
 	if len(exclusions) == 0 {
 		if k > len(a.ColdStart) {

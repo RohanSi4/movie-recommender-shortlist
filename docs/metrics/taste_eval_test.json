@@ -1,0 +1,96 @@
+{
+  "protocol": "global_future_cold_users_earliest_positive_seeds",
+  "cohort": "test",
+  "cohort_split_seed": 42,
+  "cohort_counts": {
+    "eligible_all": 14214,
+    "eligible_validation": 7154,
+    "eligible_test": 7060
+  },
+  "users_selected": 7060,
+  "selected_user_sha256": "c552113bdec90edf3c2f2964439df29c30e0952035646f046c4ce8f5b3da779c",
+  "catalog_size": 87585,
+  "cutoff_timestamp": 1604605535,
+  "cutoff_utc": "2020-11-05T19:45:35+00:00",
+  "val_fraction": 0.1,
+  "positive_threshold": 4.0,
+  "popularity_weight": 0.0,
+  "item_embeddings_sha256": "d2c273621ba45ca4bc8db2f642d7cab747a9dc197c9b2deb136cb19e92b02d5b",
+  "results_by_seed_count": {
+    "1": {
+      "users_evaluated": 7060,
+      "methods": {
+        "taste_model": {
+          "hit_rate@10": 0.8206798866855524,
+          "precision@10": 0.3380311614730878,
+          "recall@10": 0.06331282470546336,
+          "recall@50": 0.19053700914641636,
+          "recall@100": 0.2816781690495859,
+          "ndcg@10": 0.3613938754262285,
+          "mrr@10": 0.5804827667610953,
+          "catalog_coverage@100": 0.2695324541873608
+        },
+        "popularity": {
+          "hit_rate@10": 0.8188385269121813,
+          "precision@10": 0.29212464589235126,
+          "recall@10": 0.0510730050110745,
+          "recall@50": 0.16488751340961882,
+          "recall@100": 0.2495205567070739,
+          "ndcg@10": 0.3140059115276969,
+          "mrr@10": 0.5282304172849499,
+          "catalog_coverage@100": 0.00115316549637495
+        }
+      }
+    },
+    "3": {
+      "users_evaluated": 7060,
+      "methods": {
+        "taste_model": {
+          "hit_rate@10": 0.8474504249291784,
+          "precision@10": 0.3384277620396601,
+          "recall@10": 0.06612623354863381,
+          "recall@50": 0.20705183608431513,
+          "recall@100": 0.3193509593955474,
+          "ndcg@10": 0.35791159252884697,
+          "mrr@10": 0.5688581995593327,
+          "catalog_coverage@100": 0.1909002683107838
+        },
+        "popularity": {
+          "hit_rate@10": 0.771813031161473,
+          "precision@10": 0.26059490084985837,
+          "recall@10": 0.045570534394348605,
+          "recall@50": 0.15069240740806572,
+          "recall@100": 0.23736273391495102,
+          "ndcg@10": 0.27883995253136584,
+          "mrr@10": 0.47463869778317375,
+          "catalog_coverage@100": 0.0011760004566992064
+        }
+      }
+    },
+    "5": {
+      "users_evaluated": 7060,
+      "methods": {
+        "taste_model": {
+          "hit_rate@10": 0.8406515580736544,
+          "precision@10": 0.3206657223796035,
+          "recall@10": 0.06494938854597479,
+          "recall@50": 0.21238588676315362,
+          "recall@100": 0.33052197085582125,
+          "ndcg@10": 0.33818278712811095,
+          "mrr@10": 0.5383446310535546,
+          "catalog_coverage@100": 0.14503625049951477
+        },
+        "popularity": {
+          "hit_rate@10": 0.738243626062323,
+          "precision@10": 0.23759206798866858,
+          "recall@10": 0.0416969656220406,
+          "recall@50": 0.1408106858957703,
+          "recall@100": 0.2279860686693119,
+          "ndcg@10": 0.25356085716165794,
+          "mrr@10": 0.4395120621430819,
+          "catalog_coverage@100": 0.001198835417023463
+        }
+      }
+    }
+  }
+}

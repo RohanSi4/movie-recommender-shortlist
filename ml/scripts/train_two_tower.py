@@ -90,6 +90,30 @@ def parse_args() -> argparse.Namespace:
         help="Apply the log-Q sampled-softmax correction (disable for ablation).",
     )
     parser.add_argument(
+        "--sampling-strategy",
+        choices=("interaction", "user-balanced"),
+        default="user-balanced",
+        help="Sample raw interactions or give each user equal weight within an epoch.",
+    )
+    parser.add_argument(
+        "--taste-loss-weight",
+        type=float,
+        default=0.5,
+        help="Weight for the product-aligned 1-to-N favorite-movie retrieval loss.",
+    )
+    parser.add_argument(
+        "--max-taste-seeds",
+        type=int,
+        default=5,
+        help="Maximum number of liked movies mixed into a training taste query.",
+    )
+    parser.add_argument(
+        "--init-checkpoint",
+        type=Path,
+        default=None,
+        help="Optional compatible checkpoint to fine-tune instead of starting from scratch.",
+    )
+    parser.add_argument(
         "--sample-users",
         type=int,
         default=None,
@@ -228,23 +252,125 @@ class TwoTower(nn.Module):
         self.item_tower = Tower(n_items, item_feat_dim, embed_dim)
 
 
-def in_batch_softmax_loss(
-    user_vecs: torch.Tensor,
-    item_vecs: torch.Tensor,
+def sampled_softmax_loss(
+    query_vecs: torch.Tensor,
+    candidate_vecs: torch.Tensor,
+    labels: torch.Tensor,
     temperature: float,
     log_q: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    # Each row's positive item is scored against every other item in the batch
-    # as an implicit negative. In-batch sampling over-penalizes popular items
-    # (they appear as negatives in proportion to their frequency), so when
-    # log_q is provided we apply the sampled-softmax correction: subtract each
-    # item's log sampling probability from its logit column. See
-    # docs/RETRIEVAL.md.
-    logits = user_vecs @ item_vecs.T / temperature
+    """Score queries against de-duplicated in-batch item candidates."""
+    logits = query_vecs @ candidate_vecs.T / temperature
     if log_q is not None:
         logits = logits - log_q.unsqueeze(0)
-    labels = torch.arange(len(logits), device=logits.device)
     return F.cross_entropy(logits, labels)
+
+
+def build_positive_index(
+    user_indices: np.ndarray,
+    item_indices: np.ndarray,
+    n_users: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Build a compact user -> positive-item index for balanced sampling."""
+    order = np.argsort(user_indices, kind="stable")
+    values = item_indices[order].astype(np.int64, copy=False)
+    counts = np.bincount(user_indices, minlength=n_users)
+    offsets = np.zeros(n_users + 1, dtype=np.int64)
+    offsets[1:] = np.cumsum(counts)
+    return offsets, values
+
+
+def item_sampling_probabilities(
+    user_indices: np.ndarray,
+    item_indices: np.ndarray,
+    offsets: np.ndarray,
+    n_items: int,
+    strategy: str,
+) -> np.ndarray:
+    """Probability that each item becomes a target under the active sampler."""
+    if strategy == "user-balanced":
+        user_counts = np.diff(offsets)
+        weights = 1.0 / user_counts[user_indices]
+        item_q = np.bincount(item_indices, weights=weights, minlength=n_items)
+        item_q /= max(1, len(user_counts))
+    else:
+        item_q = np.bincount(item_indices, minlength=n_items).astype(np.float64)
+        item_q /= max(1, len(item_indices))
+    return np.clip(item_q, 1e-9, None)
+
+
+def user_balanced_batches(
+    offsets: np.ndarray,
+    values: np.ndarray,
+    batch_size: int,
+    steps: int,
+    rng: np.random.Generator,
+):
+    """Yield batches with at most one target per user."""
+    n_users = len(offsets) - 1
+    yielded = 0
+    while yielded < steps:
+        for start in range(0, n_users, batch_size):
+            if yielded >= steps:
+                break
+            if start == 0:
+                permutation = rng.permutation(n_users)
+            users = permutation[start : start + batch_size]
+            if len(users) < 2:
+                continue
+            counts = offsets[users + 1] - offsets[users]
+            positions = (rng.random(len(users)) * counts).astype(np.int64)
+            targets = values[offsets[users] + positions]
+            yield torch.from_numpy(users), torch.from_numpy(targets)
+            yielded += 1
+
+
+def interaction_batches(
+    user_indices: torch.Tensor,
+    item_indices: torch.Tensor,
+    batch_size: int,
+):
+    permutation = torch.randperm(len(user_indices))
+    for start in range(0, len(permutation), batch_size):
+        batch = permutation[start : start + batch_size]
+        if len(batch) >= 2:
+            yield user_indices[batch], item_indices[batch]
+
+
+def sample_taste_contexts(
+    users: np.ndarray,
+    targets: np.ndarray,
+    offsets: np.ndarray,
+    values: np.ndarray,
+    max_seeds: int,
+    rng: np.random.Generator,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Sample 1-to-max_seeds other liked movies for each target user."""
+    contexts = np.zeros((len(users), max_seeds), dtype=np.int64)
+    mask = np.zeros((len(users), max_seeds), dtype=bool)
+    counts = offsets[users + 1] - offsets[users]
+    valid = counts >= 2
+    available = np.minimum(max_seeds, np.maximum(counts - 1, 0))
+    seed_counts = np.zeros(len(users), dtype=np.int64)
+    seed_counts[valid] = 1 + (
+        rng.random(valid.sum()) * available[valid]
+    ).astype(np.int64)
+
+    for column in range(max_seeds):
+        active = valid & (seed_counts > column)
+        if not active.any():
+            continue
+        active_rows = np.flatnonzero(active)
+        active_counts = counts[active_rows]
+        positions = (rng.random(len(active_rows)) * active_counts).astype(np.int64)
+        sampled = values[offsets[users[active_rows]] + positions]
+        collisions = sampled == targets[active_rows]
+        if collisions.any():
+            positions[collisions] = (positions[collisions] + 1) % active_counts[collisions]
+            sampled = values[offsets[users[active_rows]] + positions]
+        contexts[active_rows, column] = sampled
+        mask[active_rows, column] = True
+    return contexts, mask
 
 
 def export_embeddings(
@@ -261,6 +387,11 @@ def main() -> None:
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
+    rng = np.random.default_rng(args.seed)
+    if args.taste_loss_weight < 0:
+        raise ValueError("taste-loss-weight must be non-negative")
+    if args.max_taste_seeds < 1:
+        raise ValueError("max-taste-seeds must be at least 1")
     device = pick_device()
     started = time.time()
 
@@ -271,7 +402,6 @@ def main() -> None:
     positives = train_ratings[train_ratings["rating"] >= args.positive_threshold]
 
     if args.sample_users:
-        rng = np.random.default_rng(args.seed)
         keep = rng.choice(
             positives["userId"].unique(),
             size=min(args.sample_users, positives["userId"].nunique()),
@@ -301,42 +431,118 @@ def main() -> None:
         item_feat_dim=item_features.shape[1],
         embed_dim=args.embed_dim,
     ).to(device)
+    if args.init_checkpoint:
+        checkpoint = torch.load(args.init_checkpoint, map_location="cpu", weights_only=False)
+        model.load_state_dict(checkpoint["state_dict"])
+        print(f"Loaded initial weights from {args.init_checkpoint}.")
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
 
     u_idx = torch.tensor(positives["userId"].map(user_row).to_numpy(), dtype=torch.long)
     m_idx = torch.tensor(positives["movieId"].map(item_row).to_numpy(), dtype=torch.long)
     user_feats_t = torch.tensor(user_features)
     item_feats_t = torch.tensor(item_features)
+    positive_offsets, positive_values = build_positive_index(
+        u_idx.numpy(), m_idx.numpy(), len(user_ids)
+    )
 
-    # Empirical sampling probability of each item among training positives,
-    # used for the log-Q sampled-softmax correction (clamped so unseen items
-    # in the catalog never produce -inf).
-    item_counts = np.bincount(m_idx.numpy(), minlength=len(item_ids)).astype(np.float64)
-    item_q = np.clip(item_counts / max(1, len(m_idx)), 1e-9, None)
+    # Match log-Q to the active target sampler. User-balanced training samples
+    # one user uniformly, then one of that user's positive movies uniformly.
+    item_q = item_sampling_probabilities(
+        u_idx.numpy(),
+        m_idx.numpy(),
+        positive_offsets,
+        len(item_ids),
+        args.sampling_strategy,
+    )
     log_q_all = torch.tensor(np.log(item_q), dtype=torch.float32)
 
     epoch_losses: List[float] = []
+    epoch_warm_losses: List[float] = []
+    epoch_taste_losses: List[float] = []
+    steps_per_epoch = int(np.ceil(len(u_idx) / args.batch_size))
     for epoch in range(args.epochs):
-        perm = torch.randperm(len(u_idx))
         losses: List[float] = []
-        for start in range(0, len(perm), args.batch_size):
-            batch = perm[start : start + args.batch_size]
-            if len(batch) < 2:
-                continue
-            bu, bm = u_idx[batch], m_idx[batch]
-            user_vecs = model.user_tower(bu.to(device), user_feats_t[bu].to(device))
-            item_vecs = model.item_tower(bm.to(device), item_feats_t[bm].to(device))
-            batch_log_q = log_q_all[bm].to(device) if args.logq_correction else None
-            loss = in_batch_softmax_loss(
-                user_vecs, item_vecs, args.temperature, log_q=batch_log_q
+        warm_losses: List[float] = []
+        taste_losses: List[float] = []
+        if args.sampling_strategy == "user-balanced":
+            batches = user_balanced_batches(
+                positive_offsets,
+                positive_values,
+                args.batch_size,
+                steps_per_epoch,
+                rng,
             )
+        else:
+            batches = interaction_batches(u_idx, m_idx, args.batch_size)
 
-            optimizer.zero_grad()
+        for bu, bm in batches:
+            unique_bm, target_columns = torch.unique(
+                bm, sorted=False, return_inverse=True
+            )
+            user_vecs = model.user_tower(bu.to(device), user_feats_t[bu].to(device))
+            item_vecs = model.item_tower(
+                unique_bm.to(device), item_feats_t[unique_bm].to(device)
+            )
+            batch_log_q = (
+                log_q_all[unique_bm].to(device) if args.logq_correction else None
+            )
+            warm_loss = sampled_softmax_loss(
+                user_vecs,
+                item_vecs,
+                target_columns.to(device),
+                args.temperature,
+                log_q=batch_log_q,
+            )
+            loss = warm_loss
+
+            taste_loss = None
+            if args.taste_loss_weight > 0:
+                context_ids, context_mask = sample_taste_contexts(
+                    bu.numpy(),
+                    bm.numpy(),
+                    positive_offsets,
+                    positive_values,
+                    args.max_taste_seeds,
+                    rng,
+                )
+                valid = context_mask.any(axis=1)
+                if valid.any():
+                    context_ids_t = torch.from_numpy(context_ids)
+                    context_mask_t = torch.from_numpy(context_mask).to(device)
+                    flat_ids = context_ids_t.flatten()
+                    context_vecs = model.item_tower(
+                        flat_ids.to(device), item_feats_t[flat_ids].to(device)
+                    ).reshape(len(bu), args.max_taste_seeds, -1)
+                    masked_context = context_vecs * context_mask_t.unsqueeze(-1)
+                    taste_queries = F.normalize(
+                        masked_context.sum(dim=1)
+                        / context_mask_t.sum(dim=1, keepdim=True).clamp_min(1),
+                        dim=1,
+                    )
+                    valid_t = torch.from_numpy(valid).to(device)
+                    taste_loss = sampled_softmax_loss(
+                        taste_queries[valid_t],
+                        item_vecs,
+                        target_columns.to(device)[valid_t],
+                        args.temperature,
+                        log_q=batch_log_q,
+                    )
+                    loss = loss + args.taste_loss_weight * taste_loss
+
+            optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
             losses.append(float(loss.item()))
+            warm_losses.append(float(warm_loss.item()))
+            if taste_loss is not None:
+                taste_losses.append(float(taste_loss.item()))
         epoch_losses.append(float(np.mean(losses)))
-        print(f"  epoch {epoch + 1}/{args.epochs} loss {epoch_losses[-1]:.4f}")
+        epoch_warm_losses.append(float(np.mean(warm_losses)))
+        epoch_taste_losses.append(float(np.mean(taste_losses)) if taste_losses else 0.0)
+        print(
+            f"  epoch {epoch + 1}/{args.epochs} loss {epoch_losses[-1]:.4f} "
+            f"(warm {epoch_warm_losses[-1]:.4f}, taste {epoch_taste_losses[-1]:.4f})"
+        )
 
     ensure_out_dir(args.out_dir)
 
@@ -369,12 +575,19 @@ def main() -> None:
         "device": str(device),
         "runtime_seconds": round(time.time() - started, 1),
         "epoch_losses": epoch_losses,
+        "epoch_warm_losses": epoch_warm_losses,
+        "epoch_taste_losses": epoch_taste_losses,
         "train_positives": int(len(positives)),
         "users": len(user_ids),
         "items": len(item_ids),
         "embed_dim": args.embed_dim,
         "batch_size": args.batch_size,
         "temperature": args.temperature,
+        "logq_correction": args.logq_correction,
+        "sampling_strategy": args.sampling_strategy,
+        "taste_loss_weight": args.taste_loss_weight,
+        "max_taste_seeds": args.max_taste_seeds,
+        "init_checkpoint": str(args.init_checkpoint) if args.init_checkpoint else None,
         "positive_threshold": args.positive_threshold,
         "val_fraction": args.val_fraction,
         "seed": args.seed,
