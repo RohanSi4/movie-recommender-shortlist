@@ -1,8 +1,8 @@
 # Shortlist
 
-An end-to-end movie recommendation system: retrieval builds the shortlist,
-ranking orders it. Takes ranking work out of a notebook and puts it behind an
-app people can actually use.
+A full movie discovery app built around one simple idea: pick a few movies you
+already love and get a shortlist shaped by the overlap in your taste. The model,
+Go API, and Next.js product all live in this repository.
 
 [Try the live app](https://movie-reccomender-system-red.vercel.app) ·
 [Read the case study](https://rohansingh04.com/projects/movie-recommender)
