@@ -57,9 +57,12 @@ retriever that only ever surfaces popular titles scores deceptively well.
 ## Honest limitations
 
 - In-batch negatives sample negatives proportional to item popularity, which
-  biases the model toward popular items. The standard fix is the log-Q
-  correction (subtract log sampling probability from each logit); it is left
-  as documented future work.
+  over-penalizes popular items. Training applies the standard log-Q
+  sampled-softmax correction by default (subtract each item's log sampling
+  probability from its logit column); `--no-logq-correction` reproduces the
+  uncorrected ablation. The first full uncorrected run scored recall@100
+  0.014 against a 0.127 popularity baseline, which is what motivated the
+  correction.
 - Users unseen in the training window have no embedding (cold start). The
   service keeps its popularity path for those.
 - Smoke-run numbers are for wiring verification, not model quality claims.

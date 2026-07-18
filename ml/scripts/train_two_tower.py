@@ -84,6 +84,12 @@ def parse_args() -> argparse.Namespace:
         help="Softmax temperature for in-batch sampled softmax.",
     )
     parser.add_argument(
+        "--logq-correction",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Apply the log-Q sampled-softmax correction (disable for ablation).",
+    )
+    parser.add_argument(
         "--sample-users",
         type=int,
         default=None,
@@ -223,12 +229,20 @@ class TwoTower(nn.Module):
 
 
 def in_batch_softmax_loss(
-    user_vecs: torch.Tensor, item_vecs: torch.Tensor, temperature: float
+    user_vecs: torch.Tensor,
+    item_vecs: torch.Tensor,
+    temperature: float,
+    log_q: torch.Tensor | None = None,
 ) -> torch.Tensor:
     # Each row's positive item is scored against every other item in the batch
-    # as an implicit negative. Biases retrieval toward popular items; see
-    # docs/RETRIEVAL.md for the log-Q correction left as future work.
+    # as an implicit negative. In-batch sampling over-penalizes popular items
+    # (they appear as negatives in proportion to their frequency), so when
+    # log_q is provided we apply the sampled-softmax correction: subtract each
+    # item's log sampling probability from its logit column. See
+    # docs/RETRIEVAL.md.
     logits = user_vecs @ item_vecs.T / temperature
+    if log_q is not None:
+        logits = logits - log_q.unsqueeze(0)
     labels = torch.arange(len(logits), device=logits.device)
     return F.cross_entropy(logits, labels)
 
@@ -294,6 +308,13 @@ def main() -> None:
     user_feats_t = torch.tensor(user_features)
     item_feats_t = torch.tensor(item_features)
 
+    # Empirical sampling probability of each item among training positives,
+    # used for the log-Q sampled-softmax correction (clamped so unseen items
+    # in the catalog never produce -inf).
+    item_counts = np.bincount(m_idx.numpy(), minlength=len(item_ids)).astype(np.float64)
+    item_q = np.clip(item_counts / max(1, len(m_idx)), 1e-9, None)
+    log_q_all = torch.tensor(np.log(item_q), dtype=torch.float32)
+
     epoch_losses: List[float] = []
     for epoch in range(args.epochs):
         perm = torch.randperm(len(u_idx))
@@ -305,7 +326,10 @@ def main() -> None:
             bu, bm = u_idx[batch], m_idx[batch]
             user_vecs = model.user_tower(bu.to(device), user_feats_t[bu].to(device))
             item_vecs = model.item_tower(bm.to(device), item_feats_t[bm].to(device))
-            loss = in_batch_softmax_loss(user_vecs, item_vecs, args.temperature)
+            batch_log_q = log_q_all[bm].to(device) if args.logq_correction else None
+            loss = in_batch_softmax_loss(
+                user_vecs, item_vecs, args.temperature, log_q=batch_log_q
+            )
 
             optimizer.zero_grad()
             loss.backward()
