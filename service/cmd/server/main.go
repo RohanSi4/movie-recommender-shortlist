@@ -45,6 +45,7 @@ type App struct {
 	UsersByID      map[int]UserFeatures
 	RetrievalSize  int
 	Retrieval      *retrieval.Bundle
+	ColdStart      []RankResult
 	DataDir        string
 	PosterBase     string
 	ModelAPIBase   string
@@ -189,6 +190,7 @@ func (a *App) LoadData() error {
 	for _, u := range users {
 		a.UsersByID[u.UserID] = u
 	}
+	a.ColdStart = a.rankMovies(nil, 100)
 
 	log.Printf("Loaded %d movies, %d users", len(movies), len(users))
 	bundle, err := retrieval.LoadBundle(a.DataDir)
@@ -371,12 +373,6 @@ func (a *App) rankMovies(user *UserFeatures, k int) []RankResult {
 }
 
 func (a *App) rankMoviesForUser(userID int, k int) ([]RankResult, string) {
-	user, knownUser := a.UsersByID[userID]
-	var userPtr *UserFeatures
-	if knownUser {
-		userPtr = &user
-	}
-
 	if a.Retrieval != nil {
 		query := a.Retrieval.Users.Vector(userID)
 		if query != nil {
@@ -409,7 +405,17 @@ func (a *App) rankMoviesForUser(userID int, k int) ([]RankResult, string) {
 		}
 	}
 
-	return a.rankMovies(userPtr, k), "popularity_fallback"
+	return a.rankColdStart(k), "popularity_fallback"
+}
+
+func (a *App) rankColdStart(k int) []RankResult {
+	if len(a.ColdStart) == 0 {
+		a.ColdStart = a.rankMovies(nil, 100)
+	}
+	if k > len(a.ColdStart) {
+		k = len(a.ColdStart)
+	}
+	return a.ColdStart[:k]
 }
 
 func (a *App) rankMoviesByMovie(seed Movie, k int) ([]RankResult, string) {

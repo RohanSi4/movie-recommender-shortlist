@@ -72,3 +72,6 @@ python service/scripts/benchmark_latency.py --base-url http://localhost:8080 --r
 The benchmark separates known-user retrieval, cold-user fallback, and movie
 similarity, validates the returned strategy and result count, and reports both
 server time and client round-trip time.
+
+The cold-start list is computed once when the service loads. It does not rescore
+and sort the full catalog on every unknown-user request.

@@ -75,7 +75,7 @@ Measured locally on an Apple M4 Pro over 200 requests after 20 warmups:
 |---|---:|---:|---:|
 | known user | 4.3 ms | 5.8 ms | 3 ms |
 | movie similarity | 3.5 ms | 3.7 ms | 3 ms |
-| cold-user fallback | 12.6 ms | 14.8 ms | 11 ms |
+| cold-user fallback | 0.4 ms | 0.4 ms | <1 ms |
 
 ## Honest limitations
 
