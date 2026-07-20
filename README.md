@@ -69,8 +69,12 @@ with their training-window history removed. User-balanced batches stop highly
 active viewers from dominating training, de-duplicated targets make each batch
 more useful, and log-Q is calculated for the actual sampler. Movie search uses
 the same learned item space for similarity. Users outside the trained vocabulary
-fall back to the feature-table popularity heuristic. LightGBM reranking remains
-optional and is only used when `MODEL_API_BASE` is configured.
+fall back to the feature-table popularity heuristic. When a visitor seeds the
+shortlist with a release too recent to have a trained embedding, the service
+blends in a popularity prior in proportion to how cold the seeds are, so a brand
+new movie returns well-liked films instead of noise while warm seeds stay fully
+personalized. LightGBM reranking remains optional and is only used when
+`MODEL_API_BASE` is configured.
 
 ## Run it locally
 
@@ -119,6 +123,7 @@ make export
 make train-retrieval
 make metrics-retrieval
 make metrics-taste
+make train-serving
 make export-retrieval
 ~~~
 
@@ -156,7 +161,10 @@ their earliest one, three, or five future favorites as seeds, and treats their
 later favorites as truth. Validation and test users are split deterministically,
 and the test cohort is only used after model selection. Offline metrics show
 whether the model learned something useful; the live app shows whether the full
-system is understandable and fast enough to use.
+system is understandable and fast enough to use. The bundle the app serves is
+retrained on nearly the full timeline so recent releases have embeddings, while
+the published metrics stay on the frozen holdout: evaluate on a holdout, deploy
+on all the data.
 
 ## Main API routes
 

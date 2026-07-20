@@ -20,12 +20,16 @@ import (
 // all little-endian.
 const magic = "EMB1"
 
-// Index holds one embedding table in float32, plus an id lookup.
+// Index holds one embedding table in float32, plus an id lookup. When item
+// stats are attached (see stats.go), pop and support are aligned to the same
+// row order as vecs and drive the cold-seed popularity blend.
 type Index struct {
-	dim  int
-	ids  []int32
-	rows map[int]int // external id -> row offset
-	vecs []float32   // len = len(ids) * dim, row-major
+	dim     int
+	ids     []int32
+	rows    map[int]int // external id -> row offset
+	vecs    []float32   // len = len(ids) * dim, row-major
+	pop     []float32   // normalized popularity score per row, nil until attached
+	support []int32     // training-support count per row, nil until attached
 }
 
 // Scored pairs an external id with a dot-product score.
@@ -130,12 +134,25 @@ func (x *Index) Vector(id int) []float32 {
 // best by dot product, skipping any id in exclude. Vectors are exported
 // L2-normalized, so dot product equals cosine similarity.
 func (x *Index) TopK(query []float32, k int, exclude map[int]bool) []Scored {
+	return x.topK(query, k, exclude, 0)
+}
+
+// TopKBlended scores dot(query, item) + popWeight * popScore(item). It pulls
+// results toward popular titles when the query is unreliable, which is how the
+// service rescues cold seeds. A popWeight of zero, or an index without stats,
+// is identical to TopK.
+func (x *Index) TopKBlended(query []float32, k int, exclude map[int]bool, popWeight float64) []Scored {
+	return x.topK(query, k, exclude, popWeight)
+}
+
+func (x *Index) topK(query []float32, k int, exclude map[int]bool, popWeight float64) []Scored {
 	if x == nil || len(query) != x.dim || k <= 0 {
 		return nil
 	}
 	if k > len(x.ids) {
 		k = len(x.ids)
 	}
+	blend := popWeight != 0 && x.pop != nil
 	best := make(topKHeap, 0, k)
 	for row := 0; row < len(x.ids); row++ {
 		id := int(x.ids[row])
@@ -147,7 +164,11 @@ func (x *Index) TopK(query []float32, k int, exclude map[int]bool) []Scored {
 		for d := 0; d < x.dim; d++ {
 			dot += query[d] * x.vecs[base+d]
 		}
-		candidate := Scored{ID: id, Score: float64(dot)}
+		score := float64(dot)
+		if blend {
+			score += popWeight * float64(x.pop[row])
+		}
+		candidate := Scored{ID: id, Score: score}
 		if len(best) < k {
 			heap.Push(&best, candidate)
 			continue

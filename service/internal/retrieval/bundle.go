@@ -91,6 +91,24 @@ func LoadBundle(dataDir string) (*Bundle, error) {
 	if items.Dim() != users.Dim() {
 		return nil, fmt.Errorf("item dimension %d does not match user dimension %d", items.Dim(), users.Dim())
 	}
+
+	// Item stats are optional: a bundle exported before the cold-seed blend
+	// still loads and serves, just without popularity gating.
+	if statsFile, ok := manifest.Files["item_stats"]; ok && statsFile.Name != "" {
+		statsPath := filepath.Join(dataDir, statsFile.Name)
+		if err := verifySHA256(statsPath, statsFile.SHA256); err != nil {
+			return nil, err
+		}
+		statIDs, counts, err := loadItemStats(statsPath)
+		if err != nil {
+			return nil, err
+		}
+		if len(statIDs) != statsFile.Count {
+			return nil, fmt.Errorf("item stats count does not match manifest")
+		}
+		items.AttachPopularity(statIDs, counts)
+	}
+
 	return &Bundle{Items: items, Users: users, History: history, ModelRun: manifest.ModelRun}, nil
 }
 

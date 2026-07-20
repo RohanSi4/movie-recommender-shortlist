@@ -1,29 +1,36 @@
 {
   "format_version": 1,
-  "model_run": "8f0e30d84f1e00db",
-  "val_fraction": 0.1,
+  "model_run": "3b65e0275d568e6a",
+  "val_fraction": 0.01,
   "seen_policy": "all_ratings_in_training_window",
   "files": {
     "items": {
       "name": "item_embeddings.bin",
-      "sha256": "8bc2a597c52d283902736c48bae11a9dd17432663dcc1c2c047570c7e26d3c39",
+      "sha256": "5d3cedf9e3184f5f22a4c13f379732f1fd034fed1f8de953327bf6d63dc02599",
       "count": 87585,
       "dim": 64,
       "dtype": "float16"
     },
     "users": {
       "name": "user_embeddings.bin",
-      "sha256": "ac8d7cbe1304f751c795a6e01d4358fa0edec8ce0bae5c50b8b51561ba7b4d74",
-      "count": 186458,
+      "sha256": "642bf3707b8ac87676ba344201aa5056d905792ca6657db09ab102e5f2af3b26",
+      "count": 199378,
       "dim": 64,
       "dtype": "float16"
     },
     "history": {
       "name": "user_history.bin",
-      "sha256": "510f5df666efb0e801e9b5c1028ab0a22d9af7bdac339f16f14a378a2af204f1",
-      "count": 186458,
-      "pairs": 28790289,
+      "sha256": "095e44dc9ccb24053a783877d51cd4f66213fe74f2124646da403ace7598be26",
+      "count": 199378,
+      "pairs": 31669865,
       "encoding": "delta-uvarint"
+    },
+    "item_stats": {
+      "name": "item_stats.bin",
+      "sha256": "8c9445576132673bcbb520aabbd11bab1ac7f4e2c88d7559b48e3d94d3540ede",
+      "count": 87585,
+      "items_with_support": 53994,
+      "positive_threshold": 4.0
     }
   }
 }

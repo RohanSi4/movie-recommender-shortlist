@@ -110,14 +110,66 @@ Measured locally on an Apple M4 Pro over 200 requests after 20 warmups:
 | movie similarity | 3.4 ms | 3.9 ms | 3 ms |
 | cold-user fallback | 0.4 ms | 0.4 ms | <1 ms |
 
+## Cold seeds and the popularity blend
+
+The offline split only tests warm seeds: every evaluated favorite predates the
+2020-11-05 cutoff and therefore has a trained embedding. Real visitors do the
+opposite and seed the shortlist with the recent blockbuster they just watched. A
+movie released after the cutoff has no training positives, so its embedding is
+untrained noise and its nearest neighbors are effectively random obscure titles.
+That, not a missing popularity prior, was the main cause of weak recommendations
+from recent seeds.
+
+Two changes address it, and they are deliberately separate.
+
+**Evaluate on a holdout, deploy on all the data.** The published metrics come
+from the temporal-holdout model (`val_fraction 0.1`) and never move. The bundle
+the Go service loads is a second model trained on nearly the whole timeline
+(`make train-serving`, `val_fraction 0.01`) so 2021-2023 releases get real
+embeddings. Everything but the tiny final holdout becomes training signal.
+
+**Cold-gated popularity.** `export_embeddings.py` also writes `item_stats.bin`,
+the count of training-window positive ratings (>= 4.0) per movie. That single
+file feeds two derived signals in Go:
+
+- a popularity score, the z-scored `log1p(count)`, and
+- a per-seed warmth, `log1p(support) / log1p(WARM_REF)` clamped to `[0, 1]`,
+  with `WARM_REF` defaulting to 300 positives.
+
+The serving score is `dot + weight * popularity`, where the blend weight is
+`COLD_POP_WEIGHT * (1 - mean seed warmth)` (default `COLD_POP_WEIGHT` 0.6). The
+mean is taken because the taste query is an equal-weight average of the seeds, so
+one warm seed should not mask a noisy one. Fully warm seeds drive the weight to
+zero and keep pure personalization; fully cold seeds get the full popularity
+rescue. Both the taste path and the movie-similarity path apply it. The blend is
+backward compatible: with no stats file the weight is zero and the score is the
+old exact dot product.
+
+Leaning on popularity is a serving-only choice with a measured cost. A global
+popularity weight monotonically hurts the honest held-out metric, dropping
+validation-cohort HitRate@10 from 0.838 at weight 0 to 0.799 at 0.5. Gating on
+warmth confines that cost to seeds the model genuinely cannot represent.
+
+Observed behavior on the serving bundle for a visitor seeding Oppenheimer (2023,
+zero training support) and Everything Everywhere All at Once (2022, now warm):
+the pair returns Arrival, Parasite, Dune, and Her; Oppenheimer alone falls back
+to the popular canon of Shawshank, Pulp Fiction, and The Matrix; a warm control
+of Inception and The Matrix is untouched, returning The Dark Knight, Fight Club,
+and the Lord of the Rings trilogy.
+
 ## Honest limitations
 
 - The warm-user score applies only to the 35.2 percent of future-positive users
   who have a stored training embedding. The README leads with the anonymous
   taste test because that matches the public product.
-- 42,538 catalog movies have no positive training interaction. Their content
-  features help, but richer text features and explicit cold-item training remain
-  important next steps.
+- On the serving split, 33,591 of 87,585 catalog movies still have no positive
+  training interaction (42,538 on the evaluation split). The cold-gated blend
+  gives those seeds a sensible popular fallback, but richer text features and
+  explicit cold-item training remain important next steps.
+- The data itself ends in October 2023, so the newest releases stay thin no
+  matter the split. Oppenheimer (July 2023) has zero training support even in the
+  serving model and is served entirely by the popularity blend; a fresher ratings
+  dump is the only real fix.
 - User-balanced in-batch negatives still include unlabeled positives from other
   histories. Explicit known-positive masking and hard negatives are the next
   modeling round.

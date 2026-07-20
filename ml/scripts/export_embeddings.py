@@ -31,6 +31,7 @@ import pandas as pd
 
 MAGIC = b"EMB1"
 HISTORY_MAGIC = b"HST1"
+STATS_MAGIC = b"STA1"
 MANIFEST_NAME = "retrieval_manifest.json"
 
 
@@ -59,6 +60,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.1,
         help="Most-recent ratings held out during training.",
+    )
+    parser.add_argument(
+        "--positive-threshold",
+        type=float,
+        default=4.0,
+        help="Minimum rating counted as a positive when measuring item support.",
     )
     return parser.parse_args()
 
@@ -200,6 +207,52 @@ def write_history(
     }
 
 
+def write_item_stats(
+    out_path: Path,
+    item_ids: np.ndarray,
+    ratings: pd.DataFrame,
+    val_fraction: float,
+    positive_threshold: float,
+) -> dict[str, Any]:
+    """Train-window positive count per item, aligned to the item embedding ids.
+
+    The Go service turns these counts into a normalized popularity score (for
+    the cold-seed blend) and a per-seed warmth signal (how much collaborative
+    signal actually trained that item's embedding). One count is the single
+    source of truth for both.
+    """
+    if not 0 < val_fraction < 1:
+        raise ValueError("val-fraction must be between 0 and 1")
+    split_idx = int(len(ratings) * (1.0 - val_fraction))
+    train = ratings.sort_values("timestamp", kind="stable").iloc[:split_idx]
+    positives = train[train["rating"] >= positive_threshold]
+    counts_by_movie = positives["movieId"].value_counts()
+    counts = np.array(
+        [int(counts_by_movie.get(int(mid), 0)) for mid in item_ids], dtype=np.uint32
+    )
+
+    temp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+    with temp_path.open("wb") as handle:
+        handle.write(STATS_MAGIC)
+        handle.write(struct.pack("<I", len(item_ids)))
+        handle.write(item_ids.astype("<i4").tobytes())
+        handle.write(counts.astype("<u4").tobytes())
+    temp_path.replace(out_path)
+
+    warm = int((counts > 0).sum())
+    print(
+        f"Wrote {out_path} ({len(item_ids)} items, {warm} with training support, "
+        f"max {int(counts.max(initial=0))})"
+    )
+    return {
+        "name": out_path.name,
+        "sha256": sha256_file(out_path),
+        "count": len(item_ids),
+        "items_with_support": warm,
+        "positive_threshold": positive_threshold,
+    }
+
+
 def write_manifest(out_dir: Path, files: dict[str, dict[str, Any]], val_fraction: float) -> None:
     run_digest = hashlib.sha256()
     for key in sorted(files):
@@ -226,6 +279,7 @@ def main() -> None:
     users = load_parquet(args.model_dir / "user_embeddings.parquet")
 
     user_ids = int32_ids(users, "userId")
+    item_ids = int32_ids(items, "movieId")
     ratings = load_parquet(args.processed_dir / "ratings.parquet")
     files = {
         "items": write_embeddings(args.out_dir / "item_embeddings.bin", "movieId", items),
@@ -235,6 +289,13 @@ def main() -> None:
             ratings,
             user_ids,
             args.val_fraction,
+        ),
+        "item_stats": write_item_stats(
+            args.out_dir / "item_stats.bin",
+            item_ids,
+            ratings,
+            args.val_fraction,
+            args.positive_threshold,
         ),
     }
     write_manifest(args.out_dir, files, args.val_fraction)

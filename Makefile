@@ -49,11 +49,17 @@ train:
 train-retrieval:
 	python ml/scripts/train_two_tower.py --processed-dir ml/data/processed --out-dir ml/models/two_tower_taste --epochs 3 --batch-size 1024 --sampling-strategy user-balanced --taste-loss-weight 0.5
 
+# Serving model trains on nearly the full timeline (tiny holdout) so recent
+# releases get real embeddings. Metrics still come from train-retrieval's
+# temporal-holdout model: evaluate on a holdout, deploy on all the data.
+train-serving:
+	python ml/scripts/train_two_tower.py --processed-dir ml/data/processed --out-dir ml/models/two_tower_taste_serving --epochs 3 --batch-size 1024 --sampling-strategy user-balanced --taste-loss-weight 0.5 --val-fraction 0.01
+
 export:
 	python ml/scripts/export_service_data.py --features-dir ml/data/processed/features --out-dir service/data
 
 export-retrieval:
-	python ml/scripts/export_embeddings.py --model-dir ml/models/two_tower_taste --processed-dir ml/data/processed --out-dir service/data
+	python ml/scripts/export_embeddings.py --model-dir ml/models/two_tower_taste_serving --processed-dir ml/data/processed --out-dir service/data --val-fraction 0.01
 
 model-service:
 	uvicorn model_service.app:app --host 0.0.0.0 --port 8090

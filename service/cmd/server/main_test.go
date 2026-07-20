@@ -188,6 +188,59 @@ func TestTasteMixUsesMultipleMoviesAndExcludesSeeds(t *testing.T) {
 	}
 }
 
+func TestColdPopWeightGatesOnMeanSeedWarmth(t *testing.T) {
+	app := retrievalTestApp(t)
+	app.ColdPopWeight = 0.6
+	app.WarmRef = 300
+	// Item index ids are {1, 999, 2, 3, 4}. Seed 1 is well supported (warm);
+	// seed 3 has no training support (cold).
+	app.Retrieval.Items.AttachPopularity(
+		[]int32{1, 999, 2, 3, 4},
+		[]uint32{5000, 10, 800, 0, 400},
+	)
+
+	if w := app.coldPopWeight([]int{1}); w > 1e-9 {
+		t.Fatalf("warm seed should yield ~0 weight, got %f", w)
+	}
+	if w := app.coldPopWeight([]int{3}); math.Abs(w-0.6) > 1e-9 {
+		t.Fatalf("cold seed should yield the full ColdPopWeight, got %f", w)
+	}
+	// Mean warmth of one warm (1.0) and one cold (0.0) seed is 0.5, so the
+	// weight is 0.6 * (1 - 0.5) = 0.3.
+	if w := app.coldPopWeight([]int{1, 3}); math.Abs(w-0.3) > 1e-9 {
+		t.Fatalf("mixed warm+cold weight should be 0.3, got %f", w)
+	}
+}
+
+func TestColdPopWeightZeroWithoutStats(t *testing.T) {
+	app := retrievalTestApp(t)
+	app.ColdPopWeight = 0.6
+	app.WarmRef = 300
+	// No stats attached: the blend must stay off so behavior is unchanged.
+	if w := app.coldPopWeight([]int{3}); w != 0 {
+		t.Fatalf("missing stats should disable the blend, got %f", w)
+	}
+}
+
+// With popularity attached and a cold seed, the ranking must lean on the
+// popularity prior: the highest-support candidate should surface even though a
+// different item is the nearest neighbor of the (noisy) seed vector.
+func TestColdSeedRankingLeansOnPopularity(t *testing.T) {
+	app := retrievalTestApp(t)
+	app.ColdPopWeight = 5.0 // exaggerate so the test is unambiguous
+	app.WarmRef = 300
+	app.Retrieval.Items.AttachPopularity(
+		[]int32{1, 999, 2, 3, 4},
+		[]uint32{0, 0, 50000, 0, 0}, // movie 2 is the runaway hit
+	)
+	// Seed on movie 3 (cold, support 0). Its nearest neighbor by pure cosine is
+	// not movie 2, but the popularity blend should still float movie 2 to the top.
+	results, _ := app.rankMoviesByMovieExcluding(app.MoviesByID[3], 1, nil)
+	if len(results) != 1 || results[0].MovieID != 2 {
+		t.Fatalf("cold seed should surface the popular title, got %+v", results)
+	}
+}
+
 func TestTasteMixHonorsExplicitExclusions(t *testing.T) {
 	app := retrievalTestApp(t)
 	results, _, _, err := app.rankMoviesByTaste([]int{1, 3}, 2, []int{2})

@@ -51,6 +51,8 @@ type App struct {
 	ModelAPIBase   string
 	AllowedOrigins map[string]bool
 	ScoreWeights   ScoreWeights
+	ColdPopWeight  float64
+	WarmRef        float64
 }
 
 type ScoreWeights struct {
@@ -134,6 +136,11 @@ func main() {
 			UserBias: 1.0,
 			MeanBias: 1.0,
 		},
+		// Cold-seed popularity blend: seeds with no trained embedding (recent
+		// releases the model never saw) fall back to a popularity prior instead
+		// of returning noise. Warm seeds keep pure personalization.
+		ColdPopWeight: getEnvFloat("COLD_POP_WEIGHT", 0.6),
+		WarmRef:       getEnvFloat("WARM_REF", 300),
 	}
 
 	log.Printf("Using data dir: %s", app.DataDir)
@@ -475,6 +482,34 @@ func (a *App) rankColdStartExcluding(k int, exclusions []int) []RankResult {
 	return results
 }
 
+// coldPopWeight returns the popularity blend weight for a taste query built
+// from seedIDs. Warm seeds (embeddings backed by real training interactions)
+// return ~0 so results stay personalized; cold seeds return up to
+// ColdPopWeight so the popularity prior rescues an unreliable taste vector.
+// The taste query is an equal-weight average of the seed vectors, so query
+// reliability is the mean seed warmth: one noisy seed among warm ones still
+// dilutes the query and earns a proportional popularity nudge.
+func (a *App) coldPopWeight(seedIDs []int) float64 {
+	if a.Retrieval == nil || !a.Retrieval.Items.HasPopularity() || a.ColdPopWeight <= 0 || len(seedIDs) == 0 {
+		return 0
+	}
+	total := 0.0
+	counted := 0
+	for _, id := range seedIDs {
+		support, ok := a.Retrieval.Items.Support(id)
+		if !ok {
+			continue
+		}
+		total += retrieval.Warmth(support, a.WarmRef)
+		counted++
+	}
+	if counted == 0 {
+		return a.ColdPopWeight
+	}
+	warmth := total / float64(counted)
+	return a.ColdPopWeight * (1 - warmth)
+}
+
 func (a *App) rankMoviesByMovie(seed Movie, k int) ([]RankResult, string) {
 	return a.rankMoviesByMovieExcluding(seed, k, nil)
 }
@@ -485,7 +520,8 @@ func (a *App) rankMoviesByMovieExcluding(seed Movie, k int, explicitExclusions [
 		if query != nil {
 			exclude := map[int]bool{seed.MovieID: true}
 			addExclusions(exclude, explicitExclusions)
-			scores := a.Retrieval.Items.TopK(query, k+64, exclude)
+			popWeight := a.coldPopWeight([]int{seed.MovieID})
+			scores := a.Retrieval.Items.TopKBlended(query, k+64, exclude, popWeight)
 			results := a.embeddingResults(scores, k, func(movie Movie) []string {
 				return buildMovieEmbeddingReasons(seed, movie)
 			})
@@ -538,7 +574,8 @@ func (a *App) rankMoviesByTaste(
 			exclude := make(map[int]bool, len(uniqueIDs)+len(explicitExclusions))
 			addExclusions(exclude, uniqueIDs)
 			addExclusions(exclude, explicitExclusions)
-			scores := a.Retrieval.Items.TopK(query, k+64, exclude)
+			popWeight := a.coldPopWeight(uniqueIDs)
+			scores := a.Retrieval.Items.TopKBlended(query, k+64, exclude, popWeight)
 			results := a.embeddingResults(scores, k, func(movie Movie) []string {
 				return buildTasteEmbeddingReasons(seeds, movie)
 			})
@@ -1187,6 +1224,18 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func getEnvFloat(key string, fallback float64) float64 {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
 		return fallback
 	}

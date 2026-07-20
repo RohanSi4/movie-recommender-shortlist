@@ -11,6 +11,7 @@ service/data/*
 !service/data/item_embeddings.bin
 !service/data/user_embeddings.bin
 !service/data/user_history.bin
+!service/data/item_stats.bin
 !service/data/retrieval_manifest.json
 
 # Python

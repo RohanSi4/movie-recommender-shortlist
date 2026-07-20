@@ -52,6 +52,34 @@ class ExportEmbeddingsTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 export_embeddings.write_embeddings(path, "movieId", non_finite)
 
+    def test_item_stats_count_positives_in_training_window(self) -> None:
+        # Six ratings sorted by timestamp; val_fraction 1/6 holds out the last
+        # one, so only ratings with timestamp <= 5 and rating >= threshold count.
+        ratings = pd.DataFrame({
+            "userId": [10, 11, 12, 10, 11, 12],
+            "movieId": [2, 2, 2, 5, 5, 9],
+            "rating": [5.0, 4.0, 3.0, 5.0, 5.0, 5.0],
+            "timestamp": [1, 2, 3, 4, 5, 6],
+        })
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "item_stats.bin"
+            item_ids = np.array([2, 5, 9], dtype=np.int32)
+            metadata = export_embeddings.write_item_stats(
+                path, item_ids, ratings, val_fraction=1 / 6, positive_threshold=4.0
+            )
+            raw = path.read_bytes()
+            self.assertEqual(raw[:4], b"STA1")
+            count = struct.unpack("<I", raw[4:8])[0]
+            self.assertEqual(count, 3)
+            ids = np.frombuffer(raw[8 : 8 + count * 4], dtype="<i4")
+            counts = np.frombuffer(raw[8 + count * 4 :], dtype="<u4")
+            self.assertEqual(list(ids), [2, 5, 9])
+            # movie 2: two positives in-window (5.0, 4.0), the 3.0 is below
+            # threshold. movie 5: two positives. movie 9: only rating is the
+            # held-out last row, so zero training support.
+            self.assertEqual(list(counts), [2, 2, 0])
+            self.assertEqual(metadata["items_with_support"], 2)
+
     def test_history_matches_training_window_and_warm_users(self) -> None:
         ratings = pd.DataFrame({
             "userId": [10, 10, 10, 20, 20, 30],
