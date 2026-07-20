@@ -337,6 +337,28 @@ func TestSearchHandlerCapsLimit(t *testing.T) {
 	}
 }
 
+func TestSearchRanksNewReleasesByTMDBPopularityFallback(t *testing.T) {
+	// Both titles match "dune" equally. The obscure one has a few MovieLens
+	// ratings; the brand-new release has none but strong TMDB popularity. The
+	// fallback must lift the new release above the obscure match so a visitor
+	// can actually find and seed it, rather than burying it at zero support.
+	app := &App{
+		Movies: []Movie{
+			{MovieID: 1, Title: "Dune Warriors (1991)", RatingCount: 30},
+			{MovieID: 100693134, Title: "Dune: Part Two (2024)", RatingCount: 0, TMDBPopularity: 890.5},
+		},
+		PosterBase: "https://example.com",
+	}
+	results := app.searchMovies("dune", 10)
+	if len(results) != 2 {
+		t.Fatalf("want 2 results, got %d", len(results))
+	}
+	if results[0].MovieID != 100693134 {
+		t.Fatalf("new popular release should rank first, got order %d then %d",
+			results[0].MovieID, results[1].MovieID)
+	}
+}
+
 func TestMovieHandlerUsesPublicJSONFields(t *testing.T) {
 	app := &App{MoviesByID: map[int]Movie{1: {MovieID: 1, Title: "Toy Story", RatingCount: 68997}}}
 	request := httptest.NewRequest(http.MethodGet, "/movie/1", nil)

@@ -950,7 +950,15 @@ func (a *App) searchMovies(query string, limit int) []SearchResult {
 		if score == 0 {
 			continue
 		}
-		score += 0.1 * math.Log1p(float64(m.RatingCount))
+		// Popularity tiebreak so common titles rank first. Movies discovered
+		// from TMDB have no MovieLens ratings, so fall back to TMDB popularity;
+		// otherwise a brand-new release would sort below every obscure title
+		// match and never be findable to seed.
+		popSignal := float64(m.RatingCount)
+		if popSignal == 0 {
+			popSignal = m.TMDBPopularity
+		}
+		score += 0.1 * math.Log1p(popSignal)
 		scoredMovies = append(scoredMovies, scored{Movie: m, Score: score})
 	}
 	sort.Slice(scoredMovies, func(i, j int) bool {

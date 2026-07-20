@@ -1,4 +1,4 @@
-.PHONY: help venv install ingest enrich features training train train-retrieval export export-retrieval model-service service frontend metrics-eval metrics-retrieval metrics-taste metrics-scale metrics-latency metrics-compare test-service test-frontend test
+.PHONY: help venv install ingest enrich features training train train-retrieval discover-tmdb export export-retrieval model-service service frontend metrics-eval metrics-retrieval metrics-taste metrics-scale metrics-latency metrics-compare test-service test-frontend test
 
 help:
 	@echo "make venv            - create + activate venv + install deps (macOS/zsh)"
@@ -9,6 +9,7 @@ help:
 	@echo "make training        - build train/val datasets"
 	@echo "make train           - train LightGBM model"
 	@echo "make train-retrieval - train the two-tower retrieval model"
+	@echo "make discover-tmdb   - pull recent (post-2023) releases from TMDB (needs TMDB_API_KEY)"
 	@echo "make export          - export CSVs for Go service"
 	@echo "make export-retrieval - export verified retrieval binaries for Go"
 	@echo "make model-service   - run FastAPI model server"
@@ -55,11 +56,19 @@ train-retrieval:
 train-serving:
 	python ml/scripts/train_two_tower.py --processed-dir ml/data/processed --out-dir ml/models/two_tower_taste_serving --epochs 3 --batch-size 1024 --sampling-strategy user-balanced --taste-loss-weight 0.5 --val-fraction 0.01
 
+# Pull recent releases straight from TMDB so films past the 2023 ratings wall
+# enter the catalog. Needs TMDB_API_KEY. The export steps below give each one a
+# genre-centroid cold embedding and zero training support, so the cold-seed
+# popularity blend governs its ranking.
+discover-tmdb:
+	python ml/scripts/discover_tmdb.py --out ml/data/processed/tmdb_discovered.csv --start-date 2023-10-01 --min-votes 50
+
+# --extra-* are no-ops until discover-tmdb has written the CSV.
 export:
-	python ml/scripts/export_service_data.py --features-dir ml/data/processed/features --out-dir service/data
+	python ml/scripts/export_service_data.py --features-dir ml/data/processed/features --out-dir service/data --extra-movies ml/data/processed/tmdb_discovered.csv
 
 export-retrieval:
-	python ml/scripts/export_embeddings.py --model-dir ml/models/two_tower_taste_serving --processed-dir ml/data/processed --out-dir service/data --val-fraction 0.01
+	python ml/scripts/export_embeddings.py --model-dir ml/models/two_tower_taste_serving --processed-dir ml/data/processed --out-dir service/data --val-fraction 0.01 --extra-items ml/data/processed/tmdb_discovered.csv
 
 model-service:
 	uvicorn model_service.app:app --host 0.0.0.0 --port 8090

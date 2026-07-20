@@ -119,6 +119,7 @@ make enrich
 make features
 make training
 make train
+make discover-tmdb
 make export
 make train-retrieval
 make metrics-retrieval
@@ -126,6 +127,12 @@ make metrics-taste
 make train-serving
 make export-retrieval
 ~~~
+
+`make discover-tmdb` (needs `TMDB_API_KEY`) pulls releases newer than the 2023
+ratings wall from TMDB so 2024+ films enter the catalog. They cannot have a
+learned vector, so the export gives each a genre-centroid cold embedding and zero
+training support, which the cold-seed popularity blend then handles. It is
+optional: the export steps skip it cleanly when the discovered file is absent.
 
 TMDB enrichment needs `TMDB_API_KEY`. MovieLens supplies the ratings, tags, and
 movie identifiers; TMDB supplies the review-friendly metadata and posters.

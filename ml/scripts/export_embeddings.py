@@ -67,6 +67,13 @@ def parse_args() -> argparse.Namespace:
         default=4.0,
         help="Minimum rating counted as a positive when measuring item support.",
     )
+    parser.add_argument(
+        "--extra-items",
+        type=Path,
+        default=None,
+        help="Optional CSV of discovered movies (from discover_tmdb.py) to add "
+        "with genre-centroid cold-start embeddings.",
+    )
     return parser.parse_args()
 
 
@@ -253,6 +260,91 @@ def write_item_stats(
     }
 
 
+NO_GENRES = "(no genres listed)"
+
+
+def genre_centroids(
+    items: pd.DataFrame, id_col: str, dims: list[str], genres_by_movie: dict[int, str]
+) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    """Unit-norm mean trained embedding per MovieLens genre, plus a global mean.
+
+    A movie released after the ratings wall has no learned vector. Averaging the
+    centroids of the genres it shares with the trained catalog places it in the
+    right region of the space, which is enough to seed a taste query and to be
+    retrieved. It is the poor-man's content tower until an explicit one exists.
+    """
+    vectors = items[dims].to_numpy(dtype=np.float64)
+    ids = items[id_col].to_numpy()
+    sums: dict[str, np.ndarray] = {}
+    counts: dict[str, int] = {}
+    for row, movie_id in enumerate(ids):
+        genres = genres_by_movie.get(int(movie_id))
+        if not genres or genres == NO_GENRES:
+            continue
+        for token in str(genres).split("|"):
+            if not token:
+                continue
+            if token not in sums:
+                sums[token] = np.zeros(len(dims))
+                counts[token] = 0
+            sums[token] += vectors[row]
+            counts[token] += 1
+
+    centroids: dict[str, np.ndarray] = {}
+    for token, total in sums.items():
+        centroids[token] = _unit(total / counts[token])
+    return centroids, _unit(vectors.mean(axis=0))
+
+
+def _unit(vector: np.ndarray) -> np.ndarray:
+    norm = np.linalg.norm(vector)
+    return vector / norm if norm > 0 else vector
+
+
+def cold_embeddings(
+    extra: pd.DataFrame,
+    id_col: str,
+    dims: list[str],
+    centroids: dict[str, np.ndarray],
+    global_centroid: np.ndarray,
+) -> pd.DataFrame:
+    """Genre-centroid embeddings for discovered movies, on the unit sphere."""
+    rows: list[list[float]] = []
+    for _, record in extra.iterrows():
+        matched = [
+            centroids[token]
+            for token in str(record.get("genres") or "").split("|")
+            if token in centroids
+        ]
+        vector = _unit(np.mean(matched, axis=0)) if matched else global_centroid
+        rows.append([int(record[id_col]), *vector.tolist()])
+    return pd.DataFrame(rows, columns=[id_col, *dims])
+
+
+def add_cold_start_items(
+    items: pd.DataFrame, extra_path: Path, movies_path: Path
+) -> pd.DataFrame:
+    """Append discovered movies to the item embeddings with cold-start vectors."""
+    if not extra_path.exists():
+        print(f"Skipping extra items: {extra_path} not found")
+        return items
+    dims = embedding_columns(items)
+    extra = pd.read_csv(extra_path)
+    known = set(items["movieId"].astype(int))
+    extra = extra[~extra["movieId"].astype(int).isin(known)].copy()
+    if extra.empty:
+        print(f"No new items in {extra_path}")
+        return items[["movieId", *dims]]
+
+    movies = load_parquet(movies_path)
+    genres_by_movie = dict(zip(movies["movieId"].astype(int), movies["genres"]))
+    centroids, global_centroid = genre_centroids(items, "movieId", dims, genres_by_movie)
+    cold = cold_embeddings(extra, "movieId", dims, centroids, global_centroid)
+    combined = pd.concat([items[["movieId", *dims]], cold], ignore_index=True)
+    print(f"Added {len(cold)} cold-start items from {extra_path}")
+    return combined
+
+
 def write_manifest(out_dir: Path, files: dict[str, dict[str, Any]], val_fraction: float) -> None:
     run_digest = hashlib.sha256()
     for key in sorted(files):
@@ -277,6 +369,11 @@ def main() -> None:
 
     items = load_parquet(args.model_dir / "item_embeddings.parquet")
     users = load_parquet(args.model_dir / "user_embeddings.parquet")
+
+    if args.extra_items is not None:
+        items = add_cold_start_items(
+            items, args.extra_items, args.processed_dir / "movies.parquet"
+        )
 
     user_ids = int32_ids(users, "userId")
     item_ids = int32_ids(items, "movieId")

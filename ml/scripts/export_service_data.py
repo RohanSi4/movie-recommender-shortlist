@@ -51,6 +51,13 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional cap for number of movies exported.",
     )
+    parser.add_argument(
+        "--extra-movies",
+        type=Path,
+        default=None,
+        help="Optional CSV of discovered movies (from discover_tmdb.py) to append "
+        "to the catalog so they are searchable and seedable.",
+    )
     return parser.parse_args()
 
 
@@ -78,6 +85,20 @@ def normalize_count_column(df: pd.DataFrame) -> pd.DataFrame:
     return normalized
 
 
+def append_extra_movies(movies: pd.DataFrame, extra_path) -> pd.DataFrame:
+    """Append discovered movies (already column-shaped) to the catalog."""
+    if extra_path is None:
+        return movies
+    if not extra_path.exists():
+        print(f"Skipping extra movies: {extra_path} not found")
+        return movies
+    extra = ensure_columns(pd.read_csv(extra_path), MOVIE_COLUMNS)
+    known = set(movies["movieId"].astype(int))
+    extra = extra[~extra["movieId"].astype(int).isin(known)]
+    print(f"Merged {len(extra)} discovered movies into the catalog")
+    return pd.concat([movies, extra], ignore_index=True)
+
+
 def main() -> None:
     args = parse_args()
     movies = load_parquet(args.features_dir / "movie_features.parquet")
@@ -86,12 +107,15 @@ def main() -> None:
     if args.max_movies:
         movies = movies.head(args.max_movies)
 
+    movies = ensure_columns(movies, MOVIE_COLUMNS)
+    movies = append_extra_movies(movies, args.extra_movies)
+
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     movie_out = args.out_dir / "movie_features.csv"
     user_out = args.out_dir / "user_features.csv"
 
-    normalize_count_column(ensure_columns(movies, MOVIE_COLUMNS)).to_csv(movie_out, index=False)
+    normalize_count_column(movies).to_csv(movie_out, index=False)
     normalize_count_column(ensure_columns(users, USER_COLUMNS)).to_csv(user_out, index=False)
 
     print("Done.")

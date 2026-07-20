@@ -157,6 +157,33 @@ to the popular canon of Shawshank, Pulp Fiction, and The Matrix; a warm control
 of Inception and The Matrix is untouched, returning The Dark Knight, Fight Club,
 and the Lord of the Rings trilogy.
 
+## Recent releases past the ratings wall
+
+MovieLens stops in 2023, so no 2024+ film is even in the catalog: a visitor
+cannot search for it, let alone seed with it. `discover_tmdb.py` closes that gap
+by pulling recent releases from TMDB's `/discover/movie` endpoint (filtered by
+release date and a minimum vote count) and writing them in the catalog's own
+shape, keyed by a synthetic `movieId` of `100000000 + tmdbId` so the two id
+spaces never collide.
+
+A discovered movie has no interactions, so it cannot have a learned embedding.
+The export gives it a **genre-centroid cold embedding** instead: for each
+MovieLens genre, the mean of the trained item vectors carrying that genre, then a
+new movie is placed at the normalized average of the centroids for its own
+genres. It is the poor-man's content tower, and it is enough to make the film a
+coherent seed and a retrievable candidate. Because its training support is zero,
+the cold-seed blend automatically leans on popularity for it.
+
+The effect, measured on a scratch bundle seeded with real 2024 titles: Dune: Part
+Two returns Iron Man, Empire Strikes Back, and Guardians of the Galaxy; Inside
+Out 2 returns WALL-E, Monsters Inc., and Up; Terrifier 3 returns Alien, The
+Shining, and The Thing. Search also falls back to TMDB popularity for these
+zero-rating titles so they are findable, not buried beneath obscure older matches.
+
+The flow is `make discover-tmdb` (needs `TMDB_API_KEY`) followed by the normal
+`make export` and `make export-retrieval`; both pick up the discovered CSV
+automatically and are no-ops without it.
+
 ## Honest limitations
 
 - The warm-user score applies only to the 35.2 percent of future-positive users

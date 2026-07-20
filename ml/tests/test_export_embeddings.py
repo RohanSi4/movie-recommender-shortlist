@@ -80,6 +80,65 @@ class ExportEmbeddingsTest(unittest.TestCase):
             self.assertEqual(list(counts), [2, 2, 0])
             self.assertEqual(metadata["items_with_support"], 2)
 
+    def test_genre_centroids_and_cold_embeddings_place_by_genre(self) -> None:
+        # Two Sci-Fi movies point one way, two Comedies the other. A cold Sci-Fi
+        # movie should land on the Sci-Fi centroid, not the Comedy one.
+        items = pd.DataFrame({
+            "movieId": [1, 2, 3, 4],
+            "e0": [1.0, 1.0, 0.0, 0.0],
+            "e1": [0.0, 0.0, 1.0, 1.0],
+        })
+        genres = {1: "Sci-Fi", 2: "Sci-Fi", 3: "Comedy", 4: "Comedy"}
+        centroids, global_centroid = export_embeddings.genre_centroids(
+            items, "movieId", ["e0", "e1"], genres
+        )
+        np.testing.assert_allclose(centroids["Sci-Fi"], [1.0, 0.0], atol=1e-9)
+        np.testing.assert_allclose(centroids["Comedy"], [0.0, 1.0], atol=1e-9)
+
+        extra = pd.DataFrame({"movieId": [100], "genres": ["Sci-Fi"]})
+        cold = export_embeddings.cold_embeddings(
+            extra, "movieId", ["e0", "e1"], centroids, global_centroid
+        )
+        self.assertEqual(list(cold["movieId"]), [100])
+        np.testing.assert_allclose(cold.loc[0, ["e0", "e1"]].to_numpy(dtype=float), [1.0, 0.0], atol=1e-9)
+        # A multi-genre cold movie averages both centroids and renormalizes.
+        both = export_embeddings.cold_embeddings(
+            pd.DataFrame({"movieId": [101], "genres": ["Sci-Fi|Comedy"]}),
+            "movieId", ["e0", "e1"], centroids, global_centroid,
+        )
+        vector = both.loc[0, ["e0", "e1"]].to_numpy(dtype=float)
+        self.assertAlmostEqual(float(np.linalg.norm(vector)), 1.0, places=6)
+        np.testing.assert_allclose(vector, [0.7071, 0.7071], atol=1e-3)
+
+    def test_cold_embeddings_fall_back_to_global_when_no_genre_matches(self) -> None:
+        items = pd.DataFrame({"movieId": [1, 2], "e0": [1.0, 1.0], "e1": [0.0, 0.0]})
+        centroids, global_centroid = export_embeddings.genre_centroids(
+            items, "movieId", ["e0", "e1"], {1: "Drama", 2: "Drama"}
+        )
+        # Genre the trained catalog never had -> global centroid, unit length.
+        cold = export_embeddings.cold_embeddings(
+            pd.DataFrame({"movieId": [100], "genres": ["Western"]}),
+            "movieId", ["e0", "e1"], centroids, global_centroid,
+        )
+        vector = cold.loc[0, ["e0", "e1"]].to_numpy(dtype=float)
+        self.assertAlmostEqual(float(np.linalg.norm(vector)), 1.0, places=6)
+
+    def test_add_cold_start_items_appends_only_new_ids(self) -> None:
+        items = pd.DataFrame({
+            "movieId": [1, 2],
+            "e0": [1.0, 0.0],
+            "e1": [0.0, 1.0],
+        })
+        with tempfile.TemporaryDirectory() as directory:
+            movies_path = Path(directory) / "movies.parquet"
+            pd.DataFrame({"movieId": [1, 2], "genres": ["Sci-Fi", "Comedy"]}).to_parquet(movies_path)
+            extra_path = Path(directory) / "extra.csv"
+            # id 2 already exists and must be dropped; id 100 is new.
+            pd.DataFrame({"movieId": [2, 100], "genres": ["Comedy", "Sci-Fi"]}).to_csv(extra_path, index=False)
+            combined = export_embeddings.add_cold_start_items(items, extra_path, movies_path)
+            self.assertEqual(sorted(combined["movieId"]), [1, 2, 100])
+            self.assertEqual(list(combined.columns), ["movieId", "e0", "e1"])
+
     def test_history_matches_training_window_and_warm_users(self) -> None:
         ratings = pd.DataFrame({
             "userId": [10, 10, 10, 20, 20, 30],
