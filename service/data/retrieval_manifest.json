@@ -1,13 +1,13 @@
 {
   "format_version": 1,
-  "model_run": "3b65e0275d568e6a",
+  "model_run": "c5918ac5c8ff9e87",
   "val_fraction": 0.01,
   "seen_policy": "all_ratings_in_training_window",
   "files": {
     "items": {
       "name": "item_embeddings.bin",
-      "sha256": "5d3cedf9e3184f5f22a4c13f379732f1fd034fed1f8de953327bf6d63dc02599",
-      "count": 87585,
+      "sha256": "4b4bcd4316363c4ccdbb0e5d79280ba6c5038f40fae79b972d90a7cfc1eca867",
+      "count": 89585,
       "dim": 64,
       "dtype": "float16"
     },
@@ -27,8 +27,8 @@
     },
     "item_stats": {
       "name": "item_stats.bin",
-      "sha256": "8c9445576132673bcbb520aabbd11bab1ac7f4e2c88d7559b48e3d94d3540ede",
-      "count": 87585,
+      "sha256": "297cc7e72ad1742ed7eeb90bfea79ce39eb1ee404397a36afc728ad65def9c9b",
+      "count": 89585,
       "items_with_support": 53994,
       "positive_threshold": 4.0
     }
