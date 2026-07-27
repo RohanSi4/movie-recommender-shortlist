@@ -11,6 +11,12 @@ pip install -r requirements.txt
 ```
 
 ## Data Layout
+The pipeline runs on MovieLens 32M (`ml-32m`), which is not committed here.
+Download it from
+[grouplens.org/datasets/movielens](https://grouplens.org/datasets/movielens/)
+and unzip it first. It should report 32,000,204 ratings across 87,585 movies
+from 200,948 users, generated 2023-10-13.
+
 - `ml/data/raw/` should contain the MovieLens CSV files (unzipped).
 - `ml/data/processed/` will contain normalized Parquet outputs.
 
