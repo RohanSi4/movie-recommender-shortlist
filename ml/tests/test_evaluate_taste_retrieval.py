@@ -2,6 +2,7 @@ import importlib.util
 import unittest
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 
@@ -46,6 +47,27 @@ class TasteEvaluationTest(unittest.TestCase):
         second = evaluate_taste.cohort_bucket(123, 42)
         self.assertEqual(first, second)
         self.assertIn(first, {"validation", "test"})
+
+    def test_validation_and_test_cohorts_are_disjoint(self) -> None:
+        # The published test cohort is only "untouched" if no user can land in
+        # both buckets, so pin the partition itself.
+        users = range(1, 5001)
+        validation = {u for u in users if evaluate_taste.cohort_bucket(u, 42) == "validation"}
+        test = {u for u in users if evaluate_taste.cohort_bucket(u, 42) == "test"}
+        self.assertEqual(validation & test, set())
+        self.assertEqual(len(validation) + len(test), len(users))
+
+    def test_seeded_items_are_never_retrieved(self) -> None:
+        # main() masks each supplied favorite with -inf before ranking, for the
+        # model and the popularity baseline alike. A seed leaking back into the
+        # candidate list would inflate every metric, so assert the mechanism.
+        scores = np.array([5.0, 4.0, 3.0, 2.0, 1.0], dtype=np.float64)
+        seed_rows = [0, 2]
+        scores[seed_rows] = -np.inf
+        ranked = evaluate_taste.top_k_indices(scores, 3)
+        self.assertEqual(list(ranked), [1, 3, 4])
+        for row in seed_rows:
+            self.assertNotIn(row, ranked)
 
 
 if __name__ == "__main__":

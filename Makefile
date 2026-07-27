@@ -47,6 +47,10 @@ training:
 train:
 	python ml/scripts/train_lightgbm.py --training-dir ml/data/processed/training --out-dir ml/models --max-per-user 5000
 
+# Fresh-run recipe for the evaluation model. The committed checkpoint was built
+# incrementally (log-Q pretrain, then two taste fine-tune epochs), so this lands
+# near the published metrics rather than exactly on them. See docs/RETRIEVAL.md,
+# "Provenance of the published model".
 train-retrieval:
 	python ml/scripts/train_two_tower.py --processed-dir ml/data/processed --out-dir ml/models/two_tower_taste --epochs 3 --batch-size 1024 --sampling-strategy user-balanced --taste-loss-weight 0.5
 

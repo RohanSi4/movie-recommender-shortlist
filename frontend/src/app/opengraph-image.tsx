@@ -46,8 +46,8 @@ export default function OpenGraphImage() {
         </div>
       </div>
       <div style={{ display: "flex", gap: 36, color: "#f1b65c", fontSize: 23 }}>
-        <span>87,585 movies</span>
-        <span>186,458 taste profiles</span>
+        <span>89,585 movies</span>
+        <span>199,378 taste profiles</span>
         <span>One fresh shortlist</span>
       </div>
     </div>,

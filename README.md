@@ -35,6 +35,68 @@ a 4.0 ms median and 5.6 ms p95 client round trip. The committed
 [latency results](docs/metrics/retrieval_latency.json) keep those claims
 checkable.
 
+## How that number was measured
+
+A random train/test split would let the model study a viewer's future and then
+predict it, so every number here comes from a single global time cutoff instead.
+
+1. **Freeze time once.** All 32 million ratings are sorted by timestamp and the
+   earliest 90% become the training window, which ends 2020-11-05. Nothing after
+   that date trains anything: not the embeddings, not the user features, not the
+   popularity baseline.
+2. **Test on people the model never saw.** The test cohort is restricted to
+   users with zero ratings before the cutoff, so they did not exist when
+   training ended. 14,214 future users qualify, and a hash of the user id splits
+   them into 7,154 validation and 7,060 test users.
+3. **Choose the model on validation only.** Every training run and every design
+   choice was scored on the validation cohort. The test cohort was scored once,
+   at the end, on the selected model.
+4. **Simulate the real flow.** A test user's earliest one, three, or five
+   4.0-and-up ratings become the seeds, exactly what a visitor picks in the app,
+   and everything they rated 4.0 or higher afterwards is the truth set. The
+   query is the mean of the seed movie vectors, normalized, which is the same
+   construction the Go service uses. No user embedding is involved, so a brand
+   new visitor is exactly the case being measured.
+5. **Give the baseline the same job.** Popularity ranks by pre-cutoff rating
+   counts over the identical catalog, for the identical users, with the same
+   seed movies removed from the candidate pool.
+
+Each run stamps the cohort hash and the item-embedding file hash into its JSON,
+so any published number traces back to one model and one exact user list.
+
+### Reading the numbers honestly
+
+These test users are prolific: the median truth set is about 50 movies, so
+landing one of them in a top 10 is not a hard bar and popularity alone clears it
+73.8% of the time. HitRate@10 is the headline because it maps to what a visitor
+feels, but Recall@100 and catalog coverage are the metrics that actually
+separate the two methods.
+
+| supplied favorites | HitRate@10 | popularity | Recall@100 | popularity | catalog coverage@100 | popularity |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 82.1% | 81.9% | 0.282 | 0.250 | 27.0% | 0.12% |
+| 3 | 84.7% | 77.2% | 0.319 | 0.237 | 19.1% | 0.12% |
+| 5 | 84.1% | 73.8% | 0.331 | 0.228 | 14.5% | 0.12% |
+
+Two things in that table are worth saying out loud:
+
+- **At one favorite the model barely beats popularity on HitRate@10**, 82.1%
+  against 81.9%. One movie is a thin query. The gap only opens once there is a
+  mix to blend, which is why the product asks for up to five. Even at one seed
+  though, the model already wins Recall@100 and it draws its answers from 27% of
+  the catalog while popularity draws from 0.12%. Popularity is not really
+  competing, it is showing the same blockbusters to everyone and being right
+  often enough because those movies are widely liked. The model is finding
+  different movies for different people.
+- **HitRate@10 is not monotonic in seed count**, peaking at three favorites.
+  More seeds pull the query toward the average of a person's taste, which keeps
+  improving deep recall (0.282 to 0.319 to 0.331) while costing a little top-10
+  sharpness.
+
+One caveat I have not solved: the cohort only includes users who went on to rate
+at least six movies 4.0 or higher, so it measures active viewers rather than
+someone who rates three movies and leaves.
+
 ## How it fits together
 
 ~~~text
@@ -64,7 +126,7 @@ liked movie. New visitors therefore use a behavior the model was explicitly
 trained for. The service keeps the taste profile temporary, excludes the chosen
 movies, and searches the full catalog. No account or personal data is needed.
 
-Known users get personalized candidates from the full 87,585-movie catalog,
+Known users get personalized candidates from the full 89,585-movie catalog,
 with their training-window history removed. User-balanced batches stop highly
 active viewers from dominating training, de-duplicated targets make each batch
 more useful, and log-Q is calculated for the actual sampler. Movie search uses

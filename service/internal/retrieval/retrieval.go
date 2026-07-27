@@ -1,6 +1,6 @@
 // Package retrieval serves two-tower embedding lookups: personalized
 // candidate generation (user vector against every item vector) and learned
-// item-to-item similarity. Vectors are exact, not approximate: at 87,585
+// item-to-item similarity. Vectors are exact, not approximate: at 89,585
 // items x 64 dims a full top-25 scan takes about 3 to 4 milliseconds on the
 // development machine, which keeps ANN complexity unnecessary at this scale.
 package retrieval

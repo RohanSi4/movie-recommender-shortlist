@@ -40,6 +40,13 @@ export function compactNumber(value?: number) {
   }).format(value);
 }
 
+export function exactNumber(value?: number) {
+  if (value === undefined || !Number.isFinite(value)) {
+    return null;
+  }
+  return new Intl.NumberFormat("en-US").format(value);
+}
+
 export function strategyLabel(strategy: string) {
   if (strategy === "two_tower_taste_mix") {
     return "Blended from the movies you picked";

@@ -19,7 +19,7 @@ import { MovieSearch } from "@/components/movie-search";
 import { PosterImage } from "@/components/poster-image";
 import { SavedDrawer } from "@/components/saved-drawer";
 import { checkHealth, getRecommendations } from "@/lib/api";
-import { compactNumber, splitMovieTitle, strategyLabel } from "@/lib/format";
+import { compactNumber, exactNumber, splitMovieTitle, strategyLabel } from "@/lib/format";
 import type {
   HealthResponse,
   MovieRecommendation,
@@ -243,7 +243,12 @@ export function RecommenderApp() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const visibleCatalog = compactNumber(health?.catalog_size) ?? "87K";
+  // The served bundle is the source of truth for these counts, so the copy
+  // stays correct when a new catalog export ships. Fallbacks match the bundle
+  // currently committed in service/data.
+  const visibleCatalog = compactNumber(health?.catalog_size) ?? "89.6K";
+  const catalogSize = exactNumber(health?.catalog_size) ?? "89,585";
+  const profileCount = exactNumber(health?.profile_count) ?? "199,378";
 
   return (
     <>
@@ -421,8 +426,8 @@ export function RecommenderApp() {
             </div>
           </div>
           <dl className="proof-stats">
-            <div><dt>Movies searched</dt><dd>87,585</dd></div>
-            <div><dt>Learned profiles</dt><dd>186,458</dd></div>
+            <div><dt>Movies searched</dt><dd>{catalogSize}</dd></div>
+            <div><dt>Learned profiles</dt><dd>{profileCount}</dd></div>
             <div><dt>HitRate@10</dt><dd>84.1%<small>five-favorite test flow</small></dd></div>
             <div><dt>Recall@100</dt><dd>0.331<small>vs. 0.228 popularity</small></dd></div>
           </dl>

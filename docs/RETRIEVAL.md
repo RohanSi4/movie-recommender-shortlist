@@ -70,18 +70,56 @@ python ml/scripts/evaluate_taste_retrieval.py \
   --out docs/metrics/taste_eval_test.json
 ~~~
 
+### Provenance of the published model
+
+`make train-retrieval` trains three epochs from scratch and is the recipe to use
+for a fresh run. The specific checkpoint behind the numbers below was built
+incrementally instead, so the command above will land near these results rather
+than exactly on them:
+
+1. `two_tower_logq`, six epochs at batch 4096 with the warm-user objective only.
+2. `two_tower_taste_full_e1`, one epoch of taste fine-tuning at batch 1024 with
+   `--taste-loss-weight 0.5`, initialized from that checkpoint with seed 42.
+3. `two_tower_taste_full_e2`, one more epoch initialized from e1 with seed 43.
+   `ml/models/two_tower_taste` is that checkpoint, and its
+   `item_embeddings.parquet` hash is the one stamped into every metrics file.
+
+The serving model is simpler: `make train-serving` reproduces it directly.
+
 The product-aligned test results are:
 
-| supplied favorites | HitRate@10 | NDCG@10 | Recall@100 | popularity Recall@100 |
-|---:|---:|---:|---:|---:|
-| 1 | 82.1% | 0.361 | 0.282 | 0.250 |
-| 3 | 84.7% | 0.358 | 0.319 | 0.237 |
-| 5 | 84.1% | 0.338 | 0.331 | 0.228 |
+| supplied favorites | HitRate@10 | popularity | NDCG@10 | Recall@100 | popularity | coverage@100 | popularity |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 82.1% | 81.9% | 0.361 | 0.282 | 0.250 | 27.0% | 0.12% |
+| 3 | 84.7% | 77.2% | 0.358 | 0.319 | 0.237 | 19.1% | 0.12% |
+| 5 | 84.1% | 73.8% | 0.338 | 0.331 | 0.228 | 14.5% | 0.12% |
 
 The five-favorite model has 45 percent higher Recall@100 than popularity while
 covering 14.5 percent of the catalog at depth 100, compared with 0.12 percent
 for popularity. The raw reports also include precision, MRR, and every protocol
 identifier needed to reproduce the cohort.
+
+Three honest readings of that table:
+
+- **HitRate@10 is a generous metric on this cohort.** Eligible users have at
+  least six future positives and in practice far more: the median truth set is
+  about 50 movies. Landing one of 50 in a top 10 is not a high bar, which is
+  why popularity alone clears it 73.8 percent of the time. Recall@100 and
+  catalog coverage are the metrics that actually separate the methods.
+- **At one seed the model and popularity are effectively tied on HitRate@10**,
+  82.1 against 81.9. A single movie is a thin query. The model still wins
+  Recall@100 at that seed count, and it answers from 27 percent of the catalog
+  against popularity's 0.12 percent, so it is personalizing rather than showing
+  everyone the same canon. The gap on HitRate@10 opens only once there is a mix
+  to blend, which is the case the product is built around.
+- **HitRate@10 peaks at three seeds, not five.** Averaging more seed vectors
+  moves the query toward the center of a viewer's taste. That keeps helping deep
+  recall (0.282, 0.319, 0.331) and costs a little top-10 sharpness.
+
+Model selection used the validation cohort only. Five candidate runs were scored
+there (`ml/models/*/taste_eval_validation.json`); the selected run was scored on
+the 7,060-user test cohort once. Validation HitRate@10 at five seeds was 0.8365
+and test was 0.8407, so the held-out number did not come from tuning against it.
 
 ## Go serving path
 
@@ -89,8 +127,9 @@ identifier needed to reproduce the cohort.
 history index containing every training-window rating for each warm user. The
 manifest hashes all three files and identifies one model run. The Go service
 verifies the full bundle at startup, widens vectors to float32, and performs an
-exact dot-product scan over all 87,585 items. It uses a bounded top-k heap, so it
-does not allocate and sort the full catalog on every request.
+exact dot-product scan over all 89,585 items (the 87,585-movie MovieLens catalog
+plus 2,000 recent releases discovered from TMDB). It uses a bounded top-k heap,
+so it does not allocate and sort the full catalog on every request.
 
 Known-user requests exclude the user's stored history before returning the
 shortlist. Unknown users take the existing popularity fallback. Movie-based
@@ -189,10 +228,11 @@ automatically and are no-ops without it.
 - The warm-user score applies only to the 35.2 percent of future-positive users
   who have a stored training embedding. The README leads with the anonymous
   taste test because that matches the public product.
-- On the serving split, 33,591 of 87,585 catalog movies still have no positive
-  training interaction (42,538 on the evaluation split). The cold-gated blend
-  gives those seeds a sensible popular fallback, but richer text features and
-  explicit cold-item training remain important next steps.
+- On the serving split, 35,591 of the 89,585 movies in the served bundle still
+  have no positive training interaction (42,538 of 87,585 on the evaluation
+  split). The cold-gated blend gives those seeds a sensible popular fallback,
+  but richer text features and explicit cold-item training remain important
+  next steps.
 - The data itself ends in October 2023, so the newest releases stay thin no
   matter the split. Oppenheimer (July 2023) has zero training support even in the
   serving model and is served entirely by the popularity blend; a fresher ratings
