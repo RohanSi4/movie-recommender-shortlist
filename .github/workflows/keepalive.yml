@@ -1,0 +1,72 @@
+name: Keep the model warm
+
+# The model service runs on Render's free tier, which spins the container down
+# after ~15 minutes of no traffic. A measured cold start is 32 seconds, against
+# 0.55s warm. Nobody evaluating this project waits 32 seconds to see a
+# recommendation, so the demo was effectively broken for exactly the visitor it
+# exists to impress: the one arriving cold from a link.
+#
+# This pings /health often enough that the container never gets to idle out.
+#
+# The window is deliberate, not laziness. Render's free tier allows 750 instance
+# hours per month and only bills the hours the container is awake. Pinging around
+# the clock is 744 hours and would sit one outage-retry away from the cap; if the
+# cap is hit the service is suspended for the rest of the month, which is far
+# worse than a slow first load. 11:00-02:59 UTC is 16 hours a day, roughly 7am to
+# 11pm Eastern, which is when a human might actually open the link. That is ~496
+# hours a month and leaves real headroom.
+#
+# Worth knowing:
+#   - The 750 hours are shared across every free service on the account. If
+#     another free service gets added, redo this math.
+#   - GitHub disables scheduled workflows in a repo with no activity for 60 days.
+#   - GitHub's scheduler drifts under load and can run late. Pinging every 10
+#     minutes against a 15-minute idle timeout absorbs that. A dropped ping only
+#     means the next visitor sees the same cold start they would have seen
+#     anyway, so drift degrades to today's behavior rather than below it.
+
+on:
+  schedule:
+    - cron: "*/10 0-2,11-23 * * *"
+  workflow_dispatch:
+
+# A slow ping can outlive its slot. Let the newer run win instead of queueing a
+# backlog of pings that all fire at once.
+concurrency:
+  group: keepalive
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping the model service
+        run: |
+          # This is a warmer, not a monitor. live-smoke.yml is what actually
+          # asserts the service is healthy and fails loudly. If this job went red
+          # every time Render blipped, the red would stop meaning anything and it
+          # would drown the signal from the check that does matter. So it always
+          # exits 0 and just records what it saw.
+          code="$(curl -s -o /tmp/health.json -w '%{http_code}' \
+            --max-time 90 \
+            --retry 2 --retry-delay 20 --retry-all-errors \
+            https://moviereccomendersystem-uxol.onrender.com/health || echo "000")"
+
+          seconds="$(curl -s -o /dev/null -w '%{time_total}' \
+            --max-time 90 \
+            https://moviereccomendersystem-uxol.onrender.com/health || echo "n/a")"
+
+          echo "status=$code response=${seconds}s"
+          cat /tmp/health.json 2>/dev/null || true
+          echo
+
+          # A ping that took double-digit seconds means the container had already
+          # gone to sleep and this run paid the cold start. Surfacing it in the
+          # log turns this job into a free record of whether the warming is
+          # actually holding, without turning it into an alarm.
+          case "$seconds" in
+            n/a) echo "::warning::health check did not complete" ;;
+            [0-9].*|[0-9]) : ;;
+            *) echo "::warning::cold start observed (${seconds}s) - warming may not be holding" ;;
+          esac
