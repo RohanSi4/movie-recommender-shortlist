@@ -84,11 +84,17 @@ user rated at least 20 movies. No demographic data.
 Download: <https://files.grouplens.org/datasets/movielens/ml-32m.zip>
 (landing page: <https://grouplens.org/datasets/movielens/>)
 
-The extracted CSVs are still on disk at `data/ml-32m/`. The `ml-32m.zip` archive
-was deleted separately on 2026-08-07 after verifying all seven entries were
-already extracted at byte-identical sizes.
+**`data/ml-32m/` is no longer on disk.** Both the `ml-32m.zip` archive and the
+extracted CSVs were deleted on 2026-08-07 (1.1 GB combined). Re-download from the
+URL above and unzip to `data/ml-32m/` if the chain ever has to restart from raw.
 
-MD5 checksums, from the dataset's own `data/ml-32m/checksums.txt`:
+Deleting them is only safe because `ml/data/processed/*.parquet`, which is what
+`ingest` produces from these CSVs, was kept. Nothing in the normal rebuild path
+touches the raw files.
+
+MD5 checksums, transcribed here from the dataset's own `checksums.txt` **before
+that file was deleted along with the rest of the directory** — this table is now
+the only copy in the repo:
 
 ```
 8f033867bcb4e6be8792b21468b4fa6e  links.csv
@@ -98,7 +104,9 @@ cf12b74f9ad4b94a011f079e26d4270a  ratings.csv
 ```
 
 Verify a fresh download with `md5 -r data/ml-32m/*.csv` (macOS) or
-`md5sum` (Linux) before trusting a rebuild.
+`md5sum` (Linux) before trusting a rebuild. A mismatch means GroupLens has
+published a different revision, and every published metric in `docs/` was
+computed against the checksums above.
 
 ---
 
