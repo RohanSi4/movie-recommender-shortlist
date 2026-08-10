@@ -25,11 +25,14 @@ Go API, and Next.js product all live in this repository.
 - Serves the current live ranking path through a low-latency Go API
 
 I built the data pipeline, models, API, and web app. On an untouched test cohort
-of 7,060 future users, the live five-favorite flow reached 84.1% HitRate@10,
-0.338 NDCG@10, and 0.331 Recall@100. The same popularity baseline reached 73.8%,
-0.254, and 0.228. The stored-user retriever also reached 0.237 Recall@100 against
-0.127 for popularity. In a 200-request local benchmark, known-user requests had
-a 4.0 ms median and 5.6 ms p95 client round trip. The committed
+of 7,060 future users, the live five-favorite flow reached 0.331 Recall@100
+against 0.228 for popularity, a 45% relative lift, while retrieving from 14.5%
+of the evaluated catalog instead of popularity's 0.12%. HitRate@10 was 84.1%
+against 73.8%, but that top-line metric is generous for this cohort and is
+effectively tied at one supplied favorite. The stored-user retriever reached
+0.237 Recall@100 against 0.127 for popularity. In a 200-request local benchmark,
+known-user requests had a 4.0 ms median and 5.6 ms p95 client round trip. The
+committed
 [taste evaluation](docs/metrics/taste_eval_test.json),
 [warm-user evaluation](docs/metrics/retrieval_eval.json), and
 [latency results](docs/metrics/retrieval_latency.json) keep those claims
@@ -68,9 +71,8 @@ so any published number traces back to one model and one exact user list.
 
 These test users are prolific: the median truth set is about 50 movies, so
 landing one of them in a top 10 is not a hard bar and popularity alone clears it
-73.8% of the time. HitRate@10 is the headline because it maps to what a visitor
-feels, but Recall@100 and catalog coverage are the metrics that actually
-separate the two methods.
+73.8% of the time. Recall@100 and catalog coverage are therefore the
+load-bearing results. HitRate@10 remains useful context, not the headline.
 
 | supplied favorites | HitRate@10 | popularity | Recall@100 | popularity | catalog coverage@100 | popularity |
 |---:|---:|---:|---:|---:|---:|---:|
@@ -96,6 +98,12 @@ Two things in that table are worth saying out loud:
 One caveat I have not solved: the cohort only includes users who went on to rate
 at least six movies 4.0 or higher, so it measures active viewers rather than
 someone who rates three movies and leaves.
+
+These are offline retrieval results, not evidence that people prefer the
+recommendations. There is no online A/B test, satisfaction measure, or viewing
+completion outcome yet. The evaluated bundle contained 87,585 movies; the live
+serving bundle has since grown to 89,585, so its additional titles were not part
+of these reported quality measurements.
 
 ## How it fits together
 

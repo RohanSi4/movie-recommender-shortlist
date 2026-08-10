@@ -75,17 +75,22 @@ export function RecommenderApp() {
   const savedIds = useMemo(() => new Set(saved.map((movie) => movie.movie_id)), [saved]);
 
   useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(SAVED_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored) as MovieRecommendation[];
-        if (Array.isArray(parsed)) {
-          setSaved(parsed);
+    // Defer the external-store read until after hydration without forcing a
+    // synchronous state update inside the effect body.
+    const frame = window.requestAnimationFrame(() => {
+      try {
+        const stored = window.localStorage.getItem(SAVED_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored) as MovieRecommendation[];
+          if (Array.isArray(parsed)) {
+            setSaved(parsed);
+          }
         }
+      } catch {
+        window.localStorage.removeItem(SAVED_KEY);
       }
-    } catch {
-      window.localStorage.removeItem(SAVED_KEY);
-    }
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => {
@@ -428,7 +433,7 @@ export function RecommenderApp() {
           <dl className="proof-stats">
             <div><dt>Movies searched</dt><dd>{catalogSize}</dd></div>
             <div><dt>Learned profiles</dt><dd>{profileCount}</dd></div>
-            <div><dt>HitRate@10</dt><dd>84.1%<small>five-favorite test flow</small></dd></div>
+            <div><dt>Catalog reach</dt><dd>14.5%<small>vs. 0.12% popularity</small></dd></div>
             <div><dt>Recall@100</dt><dd>0.331<small>vs. 0.228 popularity</small></dd></div>
           </dl>
         </section>
