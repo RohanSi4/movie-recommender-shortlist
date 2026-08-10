@@ -103,7 +103,9 @@ These are offline retrieval results, not evidence that people prefer the
 recommendations. There is no online A/B test, satisfaction measure, or viewing
 completion outcome yet. The evaluated bundle contained 87,585 movies; the live
 serving bundle has since grown to 89,585, so its additional titles were not part
-of these reported quality measurements.
+of these reported quality measurements. The next evidence gate is the locked
+[directional user-validation protocol](docs/USER_VALIDATION.md), which currently
+has no participants or results.
 
 ## How it fits together
 
